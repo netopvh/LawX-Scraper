@@ -1,0 +1,9 @@
+pip install pinecone-client
+pip install customtkinter
+pip install textwrap
+pip install requests
+pip install pandas
+pip install unicodedata
+pip install tensorflow
+pip install sentence-transformers
+pip install unidecode
