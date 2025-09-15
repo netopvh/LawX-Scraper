@@ -22,6 +22,7 @@ import unicodedata
 import re
 #-----------------------------------------------------------------------
 pasta_script = os.path.dirname(os.path.abspath(__file__))
+pasta_downloads_default = os.path.join(os.path.expanduser("~"), "Downloads", "LawX-Scraper")
 pasta_downloads_os = os.path.join(pasta_script, 'downloads')
 pasta_configs = os.path.join(pasta_script, 'configurações')
 arquivo_configs = os.path.join(pasta_configs, 'configs.json')   
@@ -122,26 +123,33 @@ if os.path.exists(arquivo_configs) and os.path.getsize(arquivo_configs) > 0:
     try:
         with open(arquivo_configs, 'r+', encoding='utf-8') as f:
             configs = json.load(f)  
-            configs["pasta_downloads"] = pasta_downloads_os  
+            if configs.get("pasta_padrao", True):
+                configs["pasta_downloads"] = pasta_downloads_default
+            else:
+                configs["pasta_downloads"] = configs.get("pasta_downloads", pasta_downloads_default)
             f.seek(0)  
             json.dump(configs, f, indent=4, ensure_ascii=False)
             f.truncate()  
     except json.JSONDecodeError:
+        dados_padrao["pasta_downloads"] = pasta_downloads_default
         with open(arquivo_configs, 'w', encoding='utf-8') as f:
             json.dump(dados_padrao, f, indent=4, ensure_ascii=False)
 else:
+    dados_padrao["pasta_downloads"] = pasta_downloads_default
     with open(arquivo_configs, 'w', encoding='utf-8') as f:
         json.dump(dados_padrao, f, indent=4, ensure_ascii=False)
 #----------------------------------------------------------------------
 if os.path.exists(arquivo_configs) and os.path.getsize(arquivo_configs) > 0:
     with open(arquivo_configs, 'r+', encoding='utf-8') as f:
         configs = json.load(f)  
-        configs["pasta_downloads"] = pasta_downloads_os
+        if configs.get("pasta_padrao", True):
+            configs["pasta_downloads"] = pasta_downloads_default
+        # Não sobrescreve se pasta_padrao for False
         f.seek(0) 
         json.dump(configs, f, indent=4, ensure_ascii=False)
         f.truncate() 
 else:
-    configs = {"pasta_downloads": pasta_downloads_os}
+    configs = {"pasta_downloads": pasta_downloads_default}
     with open(arquivo_configs, 'w', encoding='utf-8') as f:
         json.dump(configs, f, indent=4, ensure_ascii=False)
 #---------------------------------------------------------------------

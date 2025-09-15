@@ -1,0 +1,15 @@
+[project]
+name = "lawx-scraper"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "customtkinter>=5.2.2",
+    "pandas>=2.3.2",
+    "pinecone-client>=6.0.0",
+    "requests>=2.32.5",
+    "sentence-transformers>=5.1.0",
+    "tensorflow>=2.20.0",
+    "unidecode>=1.4.0",
+]
