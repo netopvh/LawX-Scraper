@@ -1,10 +1,42 @@
 
+import os
+import sys
+from datetime import datetime
+
+# --- Configuração de Logging Personalizado ---
+log_dir = "logs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+def get_log_file_path():
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    current_time = now.strftime("%H-%M-%S")
+    return os.path.join(log_dir, f"log_{today}_{current_time}.txt")
+
+class DualOutput:
+    def __init__(self, stdout, log_file_path):
+        self.stdout = stdout
+        self.log_file = open(log_file_path, "a", encoding="utf-8")
+
+    def write(self, message):
+        self.stdout.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        self.stdout.flush()
+        self.log_file.flush()
+
+# Redireciona sys.stdout para o nosso DualOutput
+sys.stdout = DualOutput(sys.stdout, get_log_file_path())
+
 import customtkinter as ctk
 import sys
 import os
 import warnings
 import logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="tensorflow")
 import tensorflow as tf
 tf.get_logger().setLevel('ERROR')
@@ -35,7 +67,9 @@ pasta_json = os.path.join(pasta_downloads_os, 'pasta_json')
 arquivo_salmple_relatorios = os.path.join(pasta_relatorios, 'sample.csv')
 arquivo_salmple_json = os.path.join(pasta_json, 'sample.json')      
 pasta_backup = os.path.join(pasta_script, 'pasta_backup') 
-pasta_cache = os.path.join(pasta_script, 'pasta_cache') 
+pasta_cache = os.path.join(pasta_script, 'pasta_cache')
+if not os.path.exists(pasta_cache):
+    os.makedirs(pasta_cache, exist_ok=True) 
 dados_para_salvar_geral = []
 dados_para_salvar_filtrado = []
 #--
@@ -2428,6 +2462,14 @@ def request_todos(resume=False):
                                             df_final = df_novo
                                         df_final.to_csv(caminho_geral, sep=";", index=False, encoding='utf-8-sig')
                                         print(f"✅ [{estado_atual}] Dados salvos em {caminho_geral} (GERAL)")
+                                        # SALVAR NO RELATÓRIO GERAL
+                                        if os.path.exists(caminho_arquivo_csv):
+                                            df_relatorio_existente = pd.read_csv(caminho_arquivo_csv, sep=";", dtype=str).astype(str)
+                                            df_relatorio_final = pd.concat([df_relatorio_existente, df_novo], ignore_index=True).dropna(how='all')
+                                        else:
+                                            df_relatorio_final = df_novo
+                                        df_relatorio_final.to_csv(caminho_arquivo_csv, sep=";", index=False, encoding='utf-8-sig')
+                                        print(f"✅ [{estado_atual}] Dados salvos em {caminho_arquivo_csv} (RELATÓRIO GERAL)")
                                     else:
                                         print(f"⚠️ [{estado_atual}] Nenhum dado válido para salvar (GERAL)")
                             #------------------------------------------------------------------------------------------
@@ -2519,6 +2561,14 @@ def request_todos(resume=False):
                                         df_final.to_csv(caminho_filtrado, sep=";", index=False, encoding='utf-8-sig')
                                         print('sf4')
                                         print(f"✅ [{estado_atual}] Dados salvos em {caminho_filtrado} (FILTRADO)")
+                                        # SALVAR NO RELATÓRIO FILTRADO
+                                        if os.path.exists(caminho_arquivo_csv):
+                                            df_relatorio_existente = pd.read_csv(caminho_arquivo_csv, sep=";", dtype=str).astype(str)
+                                            df_relatorio_final = pd.concat([df_relatorio_existente, df_novo], ignore_index=True).dropna(how='all')
+                                        else:
+                                            df_relatorio_final = df_novo
+                                        df_relatorio_final.to_csv(caminho_arquivo_csv, sep=";", index=False, encoding='utf-8-sig')
+                                        print(f"✅ [{estado_atual}] Dados salvos em {caminho_arquivo_csv} (RELATÓRIO FILTRADO)")
                                     else:
                                         print(f"⚠️ [{estado_atual}] Nenhum dado válido para salvar (FILTRADO)")
                             #-----------------------------------------------------------------------------------------

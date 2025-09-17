@@ -101,3 +101,9 @@ yarn-debug.log*
 yarn-error.log*
 /configurações/cache.json
 /configurações/configs.json
+
+# Logs
+logs/
+
+/configurações/configs.json
+/configurações/cache.json

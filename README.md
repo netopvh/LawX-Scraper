@@ -30,22 +30,37 @@ O LawX Scraper é uma ferramenta de web scraping de alto desempenho que utiliza 
 git clone [url-do-repositorio]
 cd lawx-scraper
 
-# Instale com UV
+# Instale o UV (modo simplificado com Python pré instalado)
+pip install uv (não aconselho instalar esse dentro da venv)
+
+# Instale o UV (mesmo sem ter o Python)
+link para a documentação: https://docs.astral.sh/uv/getting-started/installation/#standalone-installer
+
+# Instale o Python com o UV
+link para a documentação: https://docs.astral.sh/uv/guides/install-python/
+
+# Instale com UV (recomendado com gestão de dependencia)
 uv sync
 
-# Executar a aplicação
-uv run app_code_120.py
-```
-
-### Instalação via pip tradicional
-```bash
-# Instale as dependências
+# Instale com PIP (Python caso não queira usar o UV)
 pip install -r requirements.txt
 
-# Ou use o instalador automatizado
+# Executar a aplicação (usando UV)
+uv run main.py #inicialização curta (menos linhas para chamar)
+uv run app_code_120.py #inicialização direta (inica o projeto sem intermediario)
+```
+
+# Executar a aplicação (usando Python)
+python main.py (simplificado)
+python app_code_120.py (classe principal)
+
+### Outros meios (não revisados)
+```bash
+
+# instalador automatizado (não revisado)
 ./instalador.bat  # Windows
 
-# Rodar a aplicação no Windows via batch
+# Rodar a aplicação no Windows via batch (não revisado)
 app_scrapping.bat
 ```
 
@@ -183,4 +198,10 @@ Para dúvidas ou problemas:
 
 ---
 
-**Desenvolvido com ❤️ para a comunidade jurídica brasileira**
+# Exibindo dados na tabela
+Atualmente conseguimos exibir os dados do scriping via relatório depois da pesquisa e pelo botão recuperar anterior que vai buscar destes relatórios e vai renderiza-los na tabela da aplicação.
+analises atuais ficam salvos como relatório mas ainda não exibidos depois do processo na tabela o que sera resolvido em breve.
+
+**Desenvolvido com ❤️ para a LawX e comunidade jurídica brasileira**
+
+
