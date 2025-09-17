@@ -124,18 +124,18 @@ if os.path.exists(arquivo_configs) and os.path.getsize(arquivo_configs) > 0:
         with open(arquivo_configs, 'r+', encoding='utf-8') as f:
             configs = json.load(f)  
             if configs.get("pasta_padrao", True):
-                configs["pasta_downloads"] = pasta_downloads_default
+                configs["pasta_downloads"] = pasta_downloads_os
             else:
-                configs["pasta_downloads"] = configs.get("pasta_downloads", pasta_downloads_default)
+                configs["pasta_downloads"] = configs.get("pasta_downloads", pasta_downloads_os)
             f.seek(0)  
             json.dump(configs, f, indent=4, ensure_ascii=False)
             f.truncate()  
     except json.JSONDecodeError:
-        dados_padrao["pasta_downloads"] = pasta_downloads_default
+        dados_padrao["pasta_downloads"] = pasta_downloads_os
         with open(arquivo_configs, 'w', encoding='utf-8') as f:
             json.dump(dados_padrao, f, indent=4, ensure_ascii=False)
 else:
-    dados_padrao["pasta_downloads"] = pasta_downloads_default
+    dados_padrao["pasta_downloads"] = pasta_downloads_os
     with open(arquivo_configs, 'w', encoding='utf-8') as f:
         json.dump(dados_padrao, f, indent=4, ensure_ascii=False)
 #----------------------------------------------------------------------
@@ -143,13 +143,13 @@ if os.path.exists(arquivo_configs) and os.path.getsize(arquivo_configs) > 0:
     with open(arquivo_configs, 'r+', encoding='utf-8') as f:
         configs = json.load(f)  
         if configs.get("pasta_padrao", True):
-            configs["pasta_downloads"] = pasta_downloads_default
+            configs["pasta_downloads"] = pasta_downloads_os
         # Não sobrescreve se pasta_padrao for False
         f.seek(0) 
         json.dump(configs, f, indent=4, ensure_ascii=False)
         f.truncate() 
 else:
-    configs = {"pasta_downloads": pasta_downloads_default}
+    configs = {"pasta_downloads": pasta_downloads_os}
     with open(arquivo_configs, 'w', encoding='utf-8') as f:
         json.dump(configs, f, indent=4, ensure_ascii=False)
 #---------------------------------------------------------------------
@@ -228,8 +228,67 @@ def verificar_estrutura_configs():
         print("Arquivo configs.json está estruturado corretamente.")
 verificar_estrutura_configs()
 #----------------------------------------------------------------------
-def request_singular(resume=False):
-    pass
+def request_singular(tribunal=None, resume=False):
+    global tt_txt_acordao_var, tt_txt_ementa_var, tt_doc_ementa_var, tt_doc_acordao_var, api_atual, api_pinecone
+    global indice_atual, lista_modelos_var
+    indice_atual = 0
+    current_date_index = 1
+    global contador_txt_acordao, contador_txt_ementa, contador_doc_ementa, contador_doc_acordao
+    contador_txt_acordao = 0
+    contador_txt_ementa = 0
+    contador_doc_ementa = 0
+    contador_doc_acordao = 0
+
+    print(f" [DEBUG] Valor de tribunal dentro de request_singular: {tribunal}")
+    with open(arquivo_configs, 'r', encoding='utf-8') as file:
+        configs = json.load(file)
+        data_type = configs['data-type']
+
+    if data_type == 'dia-variavel':
+        data_inicio = entry_data_inicial_var.get()
+        data_fim = entry_data_final_var.get()
+    else:
+        data_inicio = datetime.now().strftime('%d/%m/%Y')
+        data_fim = datetime.now().strftime('%d/%m/%Y')
+
+    lista_datas = get_dates_between(data_inicio, data_fim)
+
+    for data in lista_datas:
+        page = 1
+        while True:
+            base_url = 'https://comunicaapi.pje.jus.br/api/v1/comunicacao'
+            params = {
+                "pagina": page,
+                "itensPorPagina": 100,
+                "dataDisponibilizacaoInicio": data,
+                "dataDisponibilizacaoFim": data,
+            }
+            if tribunal:
+                params["siglaTribunal"] = tribunal
+            print(f" [DEBUG] Parâmetros da requisição: {params}")
+
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            response = requests.get(base_url, params=params, headers=headers)
+            print(f" [33] Request URL: {base_url}?{params}")
+
+            if response.status_code == 200:
+                try:
+                    resultado_atual = response.json()
+                    if not resultado_atual:
+                        break
+                    # Processar resultados aqui
+                    # ... (restante da lógica de processamento de resultados)
+                    page += 1
+                except json.JSONDecodeError:
+                    print("Erro ao decodificar JSON da resposta.")
+                    break
+            else:
+                print(f"Erro na requisição: {response.status_code} - {response.text}")
+                break
+
+    print("request_singular finalizado.")
 #_-----------------
 def request_tribunal():
     pass
@@ -363,7 +422,7 @@ def api_request():
     if busca_multipla == 'não' and tribunais != 'TODOS':
         tribunal = tribunais.split()[0]
         print(' - tribunal ==', tribunal)
-        request_singular()
+        request_singular(tribunal=tribunal)
     # ------------------------------------------------------------------
 #----------------------------------------------------------------------
 def request_api(): 
@@ -609,14 +668,17 @@ def popup_configs():
         with open(arquivo_configs, 'w', encoding='utf-8') as file:
             json.dump(settings, file, ensure_ascii=False, indent=4)
         #----------------------------------------
+        #----------------------------------------
+        # Garante que ambos os widgets sejam destruídos antes de criar o correto
+        if entry_tribunais and entry_tribunais.winfo_exists() and entry_tribunais.winfo_ismapped():
+            entry_tribunais.destroy()
+        if dropdown_tribunais and dropdown_tribunais.winfo_exists() and dropdown_tribunais.winfo_ismapped():
+            dropdown_tribunais.destroy()
+
         if busca_multipla_var.get() == "sim":
             entry_tribunais = ctk.CTkEntry(frame_coluna1, width=300, height=40, font=('Arial', 12), text_color='white', textvariable=entry_multiplas_buscas_var)
             entry_tribunais.place(x=20, y=50)  
-            try:
-                dropdown_tribunais.destroy()
-            except:
-                print("O widget não está presente na UI.")
-            #----------------------------------------------------------------------
+        #----------------------------------------------------------------------
         if busca_multipla_var.get() == "não":   
             with open(arquivo_tribunais, 'r', encoding='utf-8') as file:
                 tribunais_data = json.load(file)
@@ -625,10 +687,6 @@ def popup_configs():
                     lista_tribunais = lista_tribunais.split(',')
             dropdown_tribunais = ctk.CTkComboBox(frame_coluna1, width=300, height=40, font=('Arial', 12), text_color='white', values=lista_tribunais)
             dropdown_tribunais.place(x=20, y=50)
-            try:
-                entry_tribunais.destroy()
-            except:
-                print("O widget não está presente na UI.")
         popup.destroy()
     #--------------------------------------------------------
     botao_salvar = ctk.CTkButton(popup, text="Salvar", command=salvar, width=200)
@@ -1225,6 +1283,8 @@ def request_todos(resume=False):
                 delta = data_fim_dt - data_inicio_dt
                 return [(data_inicio_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
             lista_datas = gerar_datas(data_inicio, data_fim)
+            if current_date_index >= len(lista_datas):
+                current_date_index = 0
             # ------------------------------------------------------------------
         except Exception as e:
             print("❌ Erro ao carregar cache:", e)
@@ -1253,6 +1313,9 @@ def request_todos(resume=False):
     dados_front = []
     # ------------------------------------------------------------------
     print('lista_datas', lista_datas)
+    if not lista_datas:
+        print("❌ lista_datas está vazia. Não há datas para processar.")
+        return
     # ------------------------------------------------------------------
     for idx in range(start_idx, len(lista_datas)):
         data = lista_datas[idx] 
@@ -1275,6 +1338,8 @@ def request_todos(resume=False):
             data = data_cache
         #------------------------------------------------------------------
         pasta_relatorios = os.path.join(pasta_downloads, 'pasta_relatorios')    
+        if not os.path.exists(pasta_relatorios):
+            os.makedirs(pasta_relatorios)
         #------------------------------------------------------------------
         nomenclatura = configs['nomenclatura']
         if nomenclatura == 'data_tribunal': 
@@ -1354,7 +1419,7 @@ def request_todos(resume=False):
             # ------------------------------------------------------------------
             params = {
                 "pagina": page,
-                "itensPorPagina": 100,
+                "itensPorPagina": 5,
                 "dataDisponibilizacaoInicio": data,
                 "dataDisponibilizacaoFim": data,
             }
@@ -1372,9 +1437,9 @@ def request_todos(resume=False):
             if response.status_code == 200:
                 try:
                     resultado_atual = response.json()       
-                    #------------------------------------------------------------------------   
+                    #------------------------------------------------------------------------                       
                     # print(' [👁️] - numero_processo ==', n_processo)
-                    # print(' [👁️] - data_disponibilizacao ==', deta_disponibilizacao)
+                    # print(' [👁️] - data_disponibilizacao ==', data_disponibilizacao)
                     print(' - - - - - - - - - - -')
                     pasta_cache = os.path.join(pasta_downloads, 'pasta_cache')
                     if not os.path.exists(pasta_cache):
@@ -2742,6 +2807,12 @@ def request_todos(resume=False):
                     print(f" [33_S] [{estado_atual}] Request URL: {base_url}?{params}")
                     print(f" [55_S] lista_datas", lista_datas)    
                     print(f" [77_S] Data_atual =", data)
+                    if indice_atual >= len(lista_datas):
+                        print(f" [DEBUG] Todas as datas para o tribunal {tribunal} foram processadas. Finalizando scrapping para este tribunal.")
+                        status_atual = 'Status atual : Scrapping Concluído para o tribunal'
+                        status_atual_var.set(status_atual)
+                        print(status_atual)
+                        break # Sai do loop while True para este tribunal
                     data = lista_datas[indice_atual]  # Obtém a data correspondente ao índice atual
                     print(f"[55_S] lista_datas {lista_datas}")    
                     print(f"[77_S] Data_atual = {data}")

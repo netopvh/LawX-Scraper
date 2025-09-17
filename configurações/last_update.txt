@@ -1,2 +1,2 @@
-c:\Users\mahas\OneDrive\Documentos\GitHub\othon\downloads\pasta_relatorios\TODOS_2025-02-22_geral.csv
-c:\Users\mahas\OneDrive\Documentos\GitHub\othon\downloads\pasta_relatorios\TODOS_2025-02-22_filtrado.csv
+D:\Workspace\LawX-Scraper\downloads\pasta_relatorios\TODOS_2025-09-16_geral_9.csv
+D:\Workspace\LawX-Scraper\downloads\pasta_relatorios\TODOS_2025-09-16_filtrado_9.csv
