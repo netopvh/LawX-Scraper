@@ -2518,6 +2518,12 @@ def request_todos(resume=False):
                                         df_final.to_csv(caminho_geral, sep=";", index=False, encoding='utf-8-sig')
                                         print(f"✅ [{estado_atual}] Dados salvos em {caminho_geral} (GERAL)")
                                         # SALVAR NO RELATÓRIO GERAL
+                                        pasta_relatorios = os.path.join(pasta_downloads_os, 'pasta_relatorios')
+                                        os.makedirs(pasta_relatorios, exist_ok=True)
+                                        data_atual = datetime.now().strftime("%Y-%m-%d")
+                                        caminho_arquivo_relatorio_geral = os.path.join(pasta_relatorios, f'TODOS_{data_atual}_geral.csv')
+                                        df_final.to_csv(caminho_arquivo_relatorio_geral, sep=";", index=False, encoding='utf-8-sig')
+                                        print(f"✅ [SAVE] Relatório geral salvo em: {caminho_arquivo_relatorio_geral}")
                                         if os.path.exists(caminho_arquivo_csv):
                                             df_relatorio_existente = pd.read_csv(caminho_arquivo_csv, sep=";", dtype=str).astype(str)
                                             df_relatorio_final = pd.concat([df_relatorio_existente, df_novo], ignore_index=True).dropna(how='all')
@@ -2617,13 +2623,20 @@ def request_todos(resume=False):
                                         print('sf4')
                                         print(f"✅ [{estado_atual}] Dados salvos em {caminho_filtrado} (FILTRADO)")
                                         # SALVAR NO RELATÓRIO FILTRADO
-                                        if os.path.exists(caminho_arquivo_csv):
-                                            df_relatorio_existente = pd.read_csv(caminho_arquivo_csv, sep=";", dtype=str).astype(str)
-                                            df_relatorio_final = pd.concat([df_relatorio_existente, df_novo], ignore_index=True).dropna(how='all')
+                                        pasta_relatorios = os.path.join(pasta_downloads_os, 'pasta_relatorios')
+                                        os.makedirs(pasta_relatorios, exist_ok=True)
+                                        data_atual = datetime.now().strftime("%Y-%m-%d")
+                                        caminho_arquivo_relatorio_filtrado = os.path.join(pasta_relatorios, f'TODOS_{data_atual}_filtrado.csv')
+                                        if os.path.exists(caminho_arquivo_relatorio_filtrado):
+                                            df_relatorio_existente = pd.read_csv(caminho_arquivo_relatorio_filtrado, sep=";", dtype=str).astype(str)
+                                            df_relatorio_final = pd.concat([df_relatorio_existente, df_final], ignore_index=True).dropna(how='all')
+                                            df_relatorio_final = df_relatorio_final.drop_duplicates(subset='numero_processo')
                                         else:
-                                            df_relatorio_final = df_novo
-                                        df_relatorio_final.to_csv(caminho_arquivo_csv, sep=";", index=False, encoding='utf-8-sig')
-                                        print(f"✅ [{estado_atual}] Dados salvos em {caminho_arquivo_csv} (RELATÓRIO FILTRADO)")
+                                            df_relatorio_final = df_final.drop_duplicates(subset='numero_processo')
+                                        df_relatorio_final.to_csv(caminho_arquivo_relatorio_filtrado, sep=";", index=False, encoding='utf-8-sig')
+                                        print(f"✅ [{estado_atual}] Dados salvos em {caminho_arquivo_relatorio_filtrado} (RELATÓRIO FILTRADO)")
+                                        # Limpar dados após salvar
+                                        dados_para_salvar_filtrado.clear()
                                     else:
                                         print(f"⚠️ [{estado_atual}] Nenhum dado válido para salvar (FILTRADO)")
                             #-----------------------------------------------------------------------------------------
