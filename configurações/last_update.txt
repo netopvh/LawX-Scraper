@@ -1,2 +1,2 @@
-D:\Workspace\LawX-Scraper\downloads\pasta_relatorios\TODOS_2025-09-17_geral_3.csv
-D:\Workspace\LawX-Scraper\downloads\pasta_relatorios\TODOS_2025-09-17_filtrado_3.csv
+D:\Workspace\LawX-Scraper\downloads\pasta_relatorios\TODOS_2025-09-19_geral.csv
+D:\Workspace\LawX-Scraper\downloads\pasta_relatorios\TODOS_2025-09-19_filtrado.csv

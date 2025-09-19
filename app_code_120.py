@@ -279,12 +279,18 @@ def request_singular(tribunal=None, resume=False):
         data_type = configs['data-type']
 
     if data_type == 'dia-variavel':
-        data_inicio = entry_data_inicial_var.get()
-        data_fim = entry_data_final_var.get()
+        data_inicio = entry_data_entrada.get()
+        data_fim = entry_data_saida.get()
     else:
         data_inicio = datetime.now().strftime('%d/%m/%Y')
         data_fim = datetime.now().strftime('%d/%m/%Y')
 
+    def get_dates_between(start_date, end_date):
+        start_dt = datetime.strptime(start_date, "%d/%m/%Y")
+        end_dt = datetime.strptime(end_date, "%d/%m/%Y")
+        delta = end_dt - start_dt
+        return [(start_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
+    
     lista_datas = get_dates_between(data_inicio, data_fim)
 
     for data in lista_datas:
@@ -1229,6 +1235,49 @@ def janela_principal():
     
     root.mainloop()
 #---------------------------------------------------------------------- 
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), "configurações")
+TRIBUNAIS_FILE = os.path.join(CONFIG_DIR, "tribunais.json")
+
+def load_tribunais():
+    """
+    Lê tribunais.json e retorna uma lista de siglas (strings).
+    Suporta:
+      - [{"sigla": "TJSP"}, {"sigla": "TRF1"}]
+      - {"lista_tribunais": ["TJSP", "TRF1"]}
+      - ["TJSP", "TRF1"]
+    """
+    if not os.path.exists(TRIBUNAIS_FILE):
+        return []
+
+    with open(TRIBUNAIS_FILE, encoding="utf-8") as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError:
+            return []
+
+    # Caso seja um dicionário com chave 'lista_tribunais'
+    if isinstance(data, dict):
+        candidates = data.get('lista_tribunais') or data.get('tribunais') or []
+    else:
+        candidates = data
+
+    tribunais = []
+    if isinstance(candidates, list):
+        for t in candidates:
+            if isinstance(t, dict):
+                # tenta várias chaves possíveis
+                sigla = t.get('sigla') or t.get('siglaTribunal') or t.get('sigla_tribunal')
+                if sigla:
+                    tribunais.append(sigla)
+            elif isinstance(t, str):
+                # entrada já é a sigla
+                tribunais.append(t)
+    elif isinstance(candidates, str):
+        # string com vírgulas possivelmente
+        tribunais = [s.strip() for s in candidates.split(',') if s.strip()]
+
+    return tribunais
+
 def request_todos(resume=False):        
     global tt_txt_acordao_var, tt_txt_ementa_var, tt_doc_ementa_var, tt_doc_acordao_var, api_atual, api_pinecone
     global indice_atual, lista_modelos_var
@@ -1260,69 +1309,75 @@ def request_todos(resume=False):
         pasta_downloads = configs['pasta_downloads']
         print(f"Local de saída obtido: {pasta_downloads}")
     tribunal = 'TODOS'
-    #------------------------------------------------------------------
-    pasta_relatorios = os.path.join(pasta_downloads, 'pasta_relatorios')    
-    data = datetime.now().strftime("%Y-%m-%d")
-    #------------------------------------------------------------------
-    global caminho_geral, caminho_filtrado
-    caminho_geral = ''
-    caminho_filtrado = ''
-    #------------------------------------------------------------------
-    estado_atual = "RUNNING"
-    is_running = True
-    global  is_paused, page, leitura_anterior, dados_front, limiter_buffer, contador_buffer
-    lista_datas = []    
-    contador_request = 0    
-    contador_buffer = 0
-    global contador_append, contador_pagina
-    contador_append = 0 
-    contador_pagina = 0
-    dados_front = []
-    miss = 0
-    lista_datas = []
-    # ------------------------------------------------------------------
-    print(' - request_singular() iniciada')
-    print('----------------------------------------')
-    print(f"🔍 leitura_anterior: {leitura_anterior}")  # 🔴 Depuração
-    # ------------------------------------------------------------------
-    data_inicio = entry_data_entrada.get()
-    data_fim = entry_data_saida.get()
-    print(' - data_inicio ==', data_inicio)
-    print(' - data_fim ==', data_fim)
-    # ------------------------------------------------------------------
-    if resume:
-        try:
-            with open(arquivo_cache, 'r', encoding='utf-8') as f:
-                cache = json.load(f)
-            # ------------------------------------------------------------------
-            data_inicio = cache['data_inicio']
-            data_fim = cache['data_fim']
-            tribunal = cache['tribunal']
-            current_date_index = cache['current_date_index']
-            page = cache['current_page']
-            configs = cache['configs']
-            nomenclatura = configs['nomenclatura']
-            arquitetura = configs['arquitetura']
-            local_saida = configs['pasta_downloads']
-            busca_multipla = configs['busca_multipla']
-            lista_modelos = configs['lista_modelos']
-            api_key = configs['api_key']
-            modelo_atual = configs['modelo_atual']
-            print(f"✅ Resumindo a partir de {data_inicio} até {data_fim}, página {page}")
-            # ------------------------------------------------------------------
-            # 🔴 Recriar lista de datas para continuar de onde parou
-            def gerar_datas(data_inicio, data_fim):
-                data_inicio_dt = datetime.strptime(data_inicio, "%d/%m/%Y")
-                data_fim_dt = datetime.strptime(data_fim, "%d/%m/%Y")
-                delta = data_fim_dt - data_inicio_dt
-                return [(data_inicio_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
-            lista_datas = gerar_datas(data_inicio, data_fim)
-            if current_date_index >= len(lista_datas):
-                current_date_index = 0
-            # ------------------------------------------------------------------
-        except Exception as e:
-            print("❌ Erro ao carregar cache:", e)
-            return
+
+    tribunais_file = os.path.join(CONFIG_DIR, "tribunais.json")
+    tribunais = load_tribunais()
+    # 2) LOOP SOBRE CADA TRIBUNAL
+    for tribunal in tribunais:
+        print(f"\n[INICIANDO] Tribunal: {tribunal}")
+        #------------------------------------------------------------------
+        pasta_relatorios = os.path.join(pasta_downloads, 'pasta_relatorios')    
+        data = datetime.now().strftime("%Y-%m-%d")
+        #------------------------------------------------------------------
+        global caminho_geral, caminho_filtrado
+        caminho_geral = ''
+        caminho_filtrado = ''
+        #------------------------------------------------------------------
+        estado_atual = "RUNNING"
+        is_running = True
+        global is_paused, page, leitura_anterior, dados_front, limiter_buffer, contador_buffer
+        lista_datas = []    
+        contador_request = 0    
+        contador_buffer = 0
+        global contador_append, contador_pagina
+        contador_append = 0 
+        contador_pagina = 0
+        dados_front = []
+        miss = 0
+        lista_datas = []
+        # ------------------------------------------------------------------
+        print(' - request_singular() iniciada')
+        print('----------------------------------------')
+        print(f"🔍 leitura_anterior: {leitura_anterior}")  # 🔴 Depuração
+        # ------------------------------------------------------------------
+        data_inicio = entry_data_entrada.get()
+        data_fim = entry_data_saida.get()
+        print(' - data_inicio ==', data_inicio)
+        print(' - data_fim ==', data_fim)
+        # ------------------------------------------------------------------
+        if resume:
+            try:
+                with open(arquivo_cache, 'r', encoding='utf-8') as f:
+                    cache = json.load(f)
+                # ------------------------------------------------------------------
+                data_inicio = cache['data_inicio']
+                data_fim = cache['data_fim']
+                tribunal = cache['tribunal']
+                current_date_index = cache['current_date_index']
+                page = cache['current_page']
+                configs = cache['configs']
+                nomenclatura = configs['nomenclatura']
+                arquitetura = configs['arquitetura']
+                local_saida = configs['pasta_downloads']
+                busca_multipla = configs['busca_multipla']
+                lista_modelos = configs['lista_modelos']
+                api_key = configs['api_key']
+                modelo_atual = configs['modelo_atual']
+                print(f"✅ Resumindo a partir de {data_inicio} até {data_fim}, página {page}")
+                # ------------------------------------------------------------------
+                # 🔴 Recriar lista de datas para continuar de onde parou
+                def gerar_datas(data_inicio, data_fim):
+                    data_inicio_dt = datetime.strptime(data_inicio, "%d/%m/%Y")
+                    data_fim_dt = datetime.strptime(data_fim, "%d/%m/%Y")
+                    delta = data_fim_dt - data_inicio_dt
+                    return [(data_inicio_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
+                lista_datas = gerar_datas(data_inicio, data_fim)
+                if current_date_index >= len(lista_datas):
+                    current_date_index = 0
+                # ------------------------------------------------------------------
+            except Exception as e:
+                print("❌ Erro ao carregar cache:", e)
+                return
     # ------------------------------------------------------------------
     else:
         with open(arquivo_configs, 'r', encoding='utf-8') as file:
