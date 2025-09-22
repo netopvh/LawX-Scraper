@@ -1,8 +1,7 @@
-pinecone-client
+pinecone
 customtkinter
 requests
 pandas
-unicodedata
 tensorflow
 sentence-transformers
 unidecode

@@ -1,0 +1,14 @@
+services:
+  scraper:
+    build: .
+    command: python scrap.py
+    container_name: lawx-scrap
+    environment:
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - PINECONE_ENVIRONMENT=${PINECONE_ENVIRONMENT}
+      - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - .:/app
+    # Adicione restart: on-failure se desejar que o serviço reinicie automaticamente em caso de falha
+    restart: on-failure
