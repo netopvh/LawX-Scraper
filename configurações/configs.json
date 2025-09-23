@@ -1,6 +1,6 @@
 {
     "pasta_padrao": true,
-    "pasta_downloads": "C:\\Users\\gospe\\Downloads\\LawX-Scraper",
+    "pasta_downloads": "C:\\Workspace\\LawX-Scraper\\downloads",
     "preencher_data": true,
     "nomenclatura": "data_tribunal",
     "arquitetura": "csv",

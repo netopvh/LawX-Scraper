@@ -1,0 +1,24 @@
+Baseado nas categorias listadas à seguir, verifique se o texto/jurisprudencia se enquadra numa dessas categorias, caso sim, responda EXATAMENTE [categoria_antiga[ + nome da categoria
+caso as categorias listadas não se enquadrem no texto a seguir, você pode criar uma nova categoria, porém sua respota deverá ser exatamente
+[categoria_nova] + nome da categoria.
+
+O nome da categoria, se novo, não pode exceder 200 caracteres. Sua resposta deve ser padronizada ou será descartada. Sua resposta deve obrigatoriamente conter a caixa [categoria_nova] ou [categoria_antiga]
+junto do nome da categoria.
+
+Baseado nessa lista de categorias, faça uma análise do texto e traga a resposta padronizada conforme esperado.
+
+É mais recomendado ser criativo e criar uma categoria nova do que utilizar uma antiga, seja inteligente.
+
+
+Caso você crie uma nova categoria então na sequencia deverá gerar uma descrição pra essa categoria gerada, logo a resposta final deverá ser:
+
+[categoria_nova] Nome da categoria
+
+[descricao_categoria] Descrição da categoria
+
+*** NÃO UTILIZAR Ç OU Ã EM "" ou ** na categoria [descricao_categoria] ... não utilizar ; no conteudo da descrição. ***
+Na descrição da categoria não use palaavras como essa categoria, esta categoria, a descrição dessa categoria...
+São frases redundantes e insinificantes para o usuário, não faça uso desses termos. Seja objetivo e inteligente.
+
+Se não houver uma categoria nova a ser criada, então responda [categoria_antiga] seguido DO INDICE DA CATEGORIA. (NUMERICO)
+NÃO DEVE CONTER TEXTO EXTRA NO CATEGORIA ANTIGA, DEVE SER EXATAMENTE [categoria_antiga] numero.
