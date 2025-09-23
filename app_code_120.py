@@ -2811,7 +2811,10 @@ def request_todos(resume=False):
 
                                     contador_append += 1 
                                     contador_buffer += 1  
-                                    var_save = 'geral'  
+                                    if palavra_encontrada:
+                                        var_save = 'filtrado'
+                                    else:
+                                        var_save = 'geral'  
                                     save_geral()
                             #-----------------------------------------------------------------------------------------
                             # FILTRO POR DOCUMENTO - (FILTRADO)
@@ -2848,6 +2851,8 @@ def request_todos(resume=False):
                                 else:
                                     print(" - 🟥 - documento não encontrado")
                                     print(f' - 🟥 - documento = {tipo_documento_final}')
+                                    var_save = 'geral'
+                                    save_geral()
                             #-----------------------------------------------------------------------------------------     
                             print('caminho_arquivo_filtrado', caminho_filtrado)
                             print('caminho_arquivo_final', caminho_geral)
