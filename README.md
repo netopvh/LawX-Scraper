@@ -40,7 +40,7 @@ link para a documentação: https://docs.astral.sh/uv/getting-started/installati
 link para a documentação: https://docs.astral.sh/uv/guides/install-python/
 
 # Instale com UV (recomendado com gestão de dependencia)
-uv sync
+uv sync --active --link-mode=copy
 
 # Instale com PIP (Python caso não queira usar o UV)
 pip install -r requirements.txt
