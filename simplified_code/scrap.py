@@ -358,17 +358,20 @@ Este é o texto a ser analisado:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Script de scraping de jurisprudência.")
-    parser.add_argument("data_inicio", help="Data de início no formato DD/MM/AAAA")
-    parser.add_argument("data_fim", help="Data de fim no formato DD/MM/AAAA")
-    parser.add_argument("jurisprudencia_procurada", help="Termo de jurisprudência a ser procurado")
+    parser.add_argument("--data-inicio", help="Data de início no formato DD/MM/AAAA", required=True)
+    parser.add_argument("--data-fim", help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.", default=None)
+    parser.add_argument("--jurisprudencia", help="Termo de jurisprudência a ser procurado", required=True)
     parser.add_argument("--tribunais", default="Todos", help="Tribunais a serem pesquisados, separados por vírgula. Ex: 'TJSP,TJMG' ou 'Todos'")
 
     args = parser.parse_args()
 
-    tribunais_config_path = os.path.join(os.path.dirname(__file__), 'tribunais.json')
+    if args.data_fim is None:
+        args.data_fim = args.data_inicio
+
+    tribunais_config_path = os.path.join(os.path.dirname(__file__), 'config', 'tribunais.json')
     tribunais_disponiveis = load_tribunais(tribunais_config_path)
 
     categorias_config_path = os.path.join(os.path.dirname(__file__), 'categorias.csv')
     categorias_disponiveis = load_categorias(categorias_config_path)
 
-    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia_procurada, args.tribunais)
+    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunais)

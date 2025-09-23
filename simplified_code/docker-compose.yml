@@ -1,7 +1,7 @@
 services:
   scraper:
     build: .
-    command: python scrap.py
+    command: tail -f /dev/null
     container_name: lawx-scrap
     environment:
       - PINECONE_API_KEY=${PINECONE_API_KEY}
