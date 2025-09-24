@@ -1,14 +1,18 @@
-Baseado nas categorias listadas à seguir, verifique se o texto/jurisprudencia se enquadra numa dessas categorias. Sua resposta DEVE ser um objeto JSON válido.
+Sua resposta DEVE ser um objeto JSON válido.
+Nunca utilize markdown na sua resposta.
+Sempre retorne apenas o objeto JSON, sem texto adicional ou explicações.
+
+Baseado nas categorias listadas à seguir, verifique se o texto/jurisprudencia se enquadra numa dessas categorias, utilizando a seção EMENTA para qualificar a categoria correta. Sua resposta DEVE ser um objeto JSON válido.
 
 Se o texto se enquadrar em uma categoria existente, responda com a seguinte estrutura JSON:
 {
-  "categoria_id": "[categoria_antiga] + ID numérico da categoria",
+  "categoria_id": "CODIGO_DA_CATEGORIA_EXISTENTE",
   "desc_categoria": ""
 }
 
 Se as categorias listadas não se enquadrarem no texto, você deve criar uma nova categoria. Sua resposta DEVE ser um objeto JSON válido com a seguinte estrutura:
 {
-  "categoria_id": "[categoria_nova] + Nome da nova categoria",
+  "categoria_id": "NOVO_NOME_DA_CATEGORIA",
   "desc_categoria": "Descrição detalhada da nova categoria"
 }
 

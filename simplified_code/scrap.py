@@ -1,3 +1,4 @@
+import re
 import requests
 import json
 import os
@@ -16,6 +17,13 @@ from datetime import datetime, timedelta
 from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 
+def load_additional_metadata(file_path):
+    """Carrega metadados adicionais de um arquivo JSON."""
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
 # Configuração do logging
 log_dir = "logs"
 if not os.path.exists(log_dir):
@@ -27,14 +35,7 @@ def get_log_file_path():
     current_time = now.strftime("%H-%M-%S")
     return os.path.join(log_dir, f"log_{today}_{current_time}.log")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(get_log_file_path()),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 model = SentenceTransformer('intfloat/multilingual-e5-large')
 
@@ -93,7 +94,8 @@ def get_dates_between(start_date, end_date):
     delta = end_dt - start_dt
     return [(start_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
 
-def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv=False):
+def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv, test=False):
+    processed_items_count = 0
     # TODO: Implementar leitura de configs.json
 
     # Configuração do Pinecone
@@ -164,39 +166,60 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                         # Processar resultados e enviar para o Pinecone
                         all_results = []
                         for item in resultado_atual['items']:
+                            if test and processed_items_count >= 3:
+                                logging.info("Limite de 3 itens atingido no modo de teste. Parando o processamento.")
+                                break
+                            logging.debug(f"Conteúdo do item: {item}")
                             vector_id = str(item.get('id', uuid.uuid4()))
-                            if not only_csv:
-                                dummy_vector = [0.1] * 1536
-                                # Limpar metadados: converter None para string vazia
-                                cleaned_metadata = {k: (str(v) if v is not None else "") for k, v in item.items()}
-                                index.upsert(vectors=[{"id": vector_id, "values": dummy_vector, "metadata": cleaned_metadata}])
-                                logging.info(f"Item {vector_id} enviado para o Pinecone.")
-                            all_results.append(item)
-                        
+                            
+                            # Initialize default values for categorization and description
+                            item['categoria_id'] = 'sem_categoria'
+                            item['desc_categoria'] = 'sem_categoria'
+                            item['descricao_ia'] = 'sem_descricao'
+                            
                             # Processar categorização com IA
-                            texto_para_categorizar = item.get('texto', '')
-                            if texto_para_categorizar and not only_csv:
+                            ementa_extraida = extrair_ementa(item.get('texto', ''))
+                            texto_para_categorizar = ementa_extraida if ementa_extraida else item.get('texto', '')
+                            
+                            if texto_para_categorizar:
                                 openai_api_key = os.getenv("OPENAI_API_KEY")
                                 if openai_api_key:
                                     resultado_categorizacao = processar_com_ia(texto_para_categorizar, openai_api_key, categorias_disponiveis)
                                     if resultado_categorizacao:
-                                        item['categoria_id'] = resultado_categorizacao.get('categoria_id')
-                                        item['desc_categoria'] = resultado_categorizacao.get('desc_categoria')
+                                        item['categoria_id'] = resultado_categorizacao.get('categoria_id', 'sem_categoria')
+                                        item['desc_categoria'] = resultado_categorizacao.get('desc_categoria', 'sem_categoria')
                                         logging.info(f"Categoria identificada: {resultado_categorizacao}")
-
+                                
                                     # Gerar descrição com IA
                                     descricao_gerada = gerar_descricao_com_ia(texto_para_categorizar, openai_api_key)
                                     if descricao_gerada:
                                         item['descricao_ia'] = descricao_gerada
                                         logging.info(f"Descrição gerada pela IA: {descricao_gerada}")
                                 else:
-                                    logging.error("Erro: Variável de ambiente OPENAI_API_KEY não configurada.")
-                        
+                                    logging.error("Erro: Variável de ambiente OPENAI_API_KEY não configurada. Categorização e descrição IA serão ignoradas.")
+                                
+                            all_results.append(item) # Always add item to all_results
+                            
+                            # Lógica de upsert no Pinecone após categorização (condicional a not only_csv)
+                            if not only_csv:
+                                namespace = item.get('categoria_id', 'geral')
+                                dummy_vector = [0.1] * 1536
+                                cleaned_metadata = {k: (str(v) if v is not None else "") for k, v in item.items()}
+                                additional_metadata = load_additional_metadata(r"d:\Workspace\LawX-Scraper\simplified_code\docs\metadata.json")
+                                cleaned_metadata.update(additional_metadata)
+                                index.upsert(vectors=[{"id": vector_id, "values": dummy_vector, "metadata": cleaned_metadata}], namespace=namespace)
+                                logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
+                            
+                            processed_items_count += 1 # Increment count once per item
                         # Manter geração de CSV e logs
                         if all_results:
-                            output_dir = "output"
-                            os.makedirs(output_dir, exist_ok=True)
-                            csv_file_path = os.path.join(output_dir, f"jurisprudencia_{data.replace('-', '')}.csv")
+                            output_base_dir = os.path.join(os.path.dirname(__file__), 'output')
+                            categoria_dir = os.path.join(output_base_dir, item.get('desc_categoria', 'geral').replace(' ', '_').replace('/', '_'))
+                            os.makedirs(categoria_dir, exist_ok=True)
+                        
+                            data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            descricao_breve = item.get('descricao_ia', 'sem_descricao').replace(' ', '_').replace('/', '_')
+                            csv_file_path = os.path.join(categoria_dir, f"relatorio_{descricao_breve}_{data_hora}.csv")
                             
                             # Escrever cabeçalho se o arquivo não existir
                             if not os.path.exists(csv_file_path):
@@ -210,6 +233,9 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 writer.writerows(all_results)
                             logging.info(f"Dados salvos em {csv_file_path}")
 
+                        if test and processed_items_count >= 3:
+                            break
+
                         page += 1
                     except json.JSONDecodeError:
                         logging.error("Erro ao decodificar JSON da resposta.")
@@ -217,7 +243,9 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                 else:
                     logging.error(f"Erro na requisição: {response.status_code} - {response.text}")
                     break
-
+                page += 1
+            if test and processed_items_count >= 3:
+                break
     logging.info("request_singular finalizado.")
 def load_tribunais(tribunal_a_validar=None):
     """
@@ -265,6 +293,13 @@ def load_categorias():
     except Exception as e:
         logging.error(f"Erro ao carregar categorias do arquivo {categorias_path}: {e}")
         sys.exit(1)
+
+def extrair_ementa(texto):
+    """Extrai a seção 'EMENTA' de um texto, se presente."""
+    match = re.search(r'EMENTA:\s*(.*?)(?:\n\n|\Z)', texto, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return ""
 
 def processar_com_ia(texto, api_key, categorias_disponiveis):
     """Processa o texto usando a API da OpenAI para categorizar."""
@@ -388,10 +423,24 @@ Este é o texto a ser analisado:
             try:
                 categoria_ia = json.loads(value)
                 # Garantir que as chaves esperadas existam
-                return {
-                    "categoria_id": categoria_ia.get("categoria_id"),
-                    "desc_categoria": categoria_ia.get("desc_categoria")
-                }
+                categoria_id_ia = categoria_ia.get("categoria_id")
+                desc_categoria_ia = categoria_ia.get("desc_categoria")
+
+                # Verificar se a categoria retornada pela IA já existe nas categorias disponíveis
+                categoria_encontrada = next((cat for cat in categorias_disponiveis if cat['codigo_categoria'] == categoria_id_ia), None)
+
+                if categoria_encontrada:
+                    # Se a categoria existe, usar a descrição da categoria existente
+                    return {
+                        "categoria_id": categoria_encontrada['codigo_categoria'],
+                        "desc_categoria": categoria_encontrada['desc_categoria']
+                    }
+                else:
+                    # Se a categoria não existe, usar o que a IA retornou (nova categoria)
+                    return {
+                        "categoria_id": categoria_id_ia,
+                        "desc_categoria": desc_categoria_ia
+                    }
             except json.JSONDecodeError:
                 logging.error(f"Erro ao decodificar JSON da categoria da IA: {value}")
                 return {"categoria_id": None, "desc_categoria": None}
@@ -530,6 +579,7 @@ if __name__ == "__main__":
     parser.add_argument("--jurisprudencia", help="Termo de jurisprudência a ser procurado", required=True)
     parser.add_argument("--tribunais", default="Todos", help="Tribunais a serem pesquisados, separados por vírgula. Ex: 'TJSP,TJMG' ou 'Todos'")
     parser.add_argument("--only-csv", action="store_true", help="Se presente, o script gerará apenas CSVs e não usará o Pinecone.")
+    parser.add_argument("--test", action="store_true", help="Se presente, o script limitará o scraping a 10 escritas para testes.")
 
     args = parser.parse_args()
 
@@ -540,4 +590,4 @@ if __name__ == "__main__":
 
     categorias_disponiveis = load_categorias()
 
-    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunais, categorias_disponiveis, args.only_csv)
+    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunais, categorias_disponiveis, args.only_csv, args.test)

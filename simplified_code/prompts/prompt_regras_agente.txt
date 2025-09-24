@@ -1,0 +1,3 @@
+Sua resposta DEVE ser um objeto JSON válido.
+Nunca utilize markdown na sua resposta.
+Sempre retorne apenas o objeto JSON, sem texto adicional ou explicações.
