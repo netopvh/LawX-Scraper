@@ -1,22 +1,39 @@
 import re
 import requests
 import json
-import os
+
 import argparse
 import uuid
 import csv
+import os
 import logging
 import sys
 import pandas as pd
 import time
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
+
+client = OpenAI()
 
 from datetime import datetime, timedelta
 from pinecone import Pinecone, ServerlessSpec
 from pinecone.exceptions import PineconeApiException
 from sentence_transformers import SentenceTransformer
+import unicodedata
+
+def sanitize_string_for_pinecone(text):
+    """
+    Sanitiza uma string para ser usada como nome de namespace no Pinecone,
+    removendo caracteres não-ASCII e substituindo espaços por underscores.
+    """
+    text = str(text)
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+    text = text.lower().replace(' ', '_')
+    # Remove caracteres que não são alfanuméricos ou underscores
+    text = ''.join(c for c in text if c.isalnum() or c == '_')
+    return text
 
 def load_additional_metadata(file_path):
     """Carrega metadados adicionais de um arquivo JSON."""
@@ -24,6 +41,24 @@ def load_additional_metadata(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
+
+def upload_categories_file(file_path):
+    """Faz o upload do arquivo de categorias para a OpenAI e retorna o file_id."""
+    try:
+        with open(file_path, "rb") as f:
+            response = client.files.create(file=f, purpose="assistants")
+        logging.info(f"Arquivo {file_path} enviado com sucesso. File ID: {response.id}")
+        return response.id
+    except Exception as e:
+        logging.error(f"Erro ao fazer upload do arquivo {file_path}: {e}")
+        return None
+
+def abreviar_categoria(texto):
+    """Abrevia o texto para criar um código de categoria."""
+    texto = re.sub(r'[^a-zA-Z0-9\s]', '', texto) # Remove caracteres especiais
+    palavras = texto.upper().split()
+    abreviacao = "".join(word[0] for word in palavras if word)
+    return abreviacao[:10] # Limita a 10 caracteres para o código
 
 # Configuração de logging
 log_dir = "logs"
@@ -36,10 +71,9 @@ def get_log_file_path():
 # Removendo a configuração básica e adicionando handlers
 log_file_path = get_log_file_path()
 logging.getLogger().handlers = [] # Clear any existing handlers
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # File handler
-file_handler = logging.FileHandler(log_file_path)
+file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logging.getLogger().addHandler(file_handler)
@@ -49,6 +83,34 @@ stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setLevel(logging.DEBUG)
 stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logging.getLogger().addHandler(stream_handler)
+
+
+
+def update_ignored_categories_json(category_name):
+    ignored_categories_json_path = os.path.join(os.path.dirname(__file__), 'docs', "ignored_categories_count.json")
+    ignored_categories_data = {}
+    if os.path.exists(ignored_categories_json_path):
+        try:
+            with open(ignored_categories_json_path, 'r', encoding='utf-8') as f:
+                ignored_categories_data = json.load(f)
+        except json.JSONDecodeError:
+            logging.error(f"Erro ao decodificar {ignored_categories_json_path}. Criando um novo arquivo.")
+            ignored_categories_data = {}
+
+    ignored_categories_data[category_name] = ignored_categories_data.get(category_name, 0) + 1
+
+    with open(ignored_categories_json_path, 'w', encoding='utf-8') as f:
+        json.dump(ignored_categories_data, f, ensure_ascii=False, indent=4)
+    logging.info(f"Contagem de categorias ignoradas atualizada para '{category_name}'.")
+
+CATEGORIES_FILE_PATH = r"d:\Workspace\LawX-Scraper\simplified_code\docs\categorias.csv"
+categories_file_id = upload_categories_file(CATEGORIES_FILE_PATH)
+
+if not categories_file_id:
+    logging.error("Não foi possível obter o File ID para categorias.csv. Encerrando o script.")
+    sys.exit(1)
+
+logging.getLogger().setLevel(logging.DEBUG)
 
 model = SentenceTransformer('intfloat/multilingual-e5-large')
 
@@ -128,7 +190,7 @@ def get_dates_between(start_date, end_date):
     delta = end_dt - start_dt
     return [(start_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
 
-def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv, test=False):
+def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv, categories_file_id, test=False):
     processed_items_count = 0
     # TODO: Implementar leitura de configs.json
 
@@ -182,6 +244,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                 }
                 response = requests.get(base_url, params=params, headers=headers)
                 logging.info(f"Request URL: {base_url}?{params}")
+                payload_uri = f"{base_url}?{requests.compat.urlencode(params)}"
 
                 if response.status_code == 200:
                     try:
@@ -193,7 +256,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             break
                         
                         # Processar resultados e enviar para o Pinecone
-                        all_results = []
+
                         for item in resultado_atual['items']:
                             if test and processed_items_count >= 3:
                                 logging.info("Limite de 3 itens atingido no modo de teste. Parando o processamento.")
@@ -207,17 +270,29 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             item['descricao_ia'] = 'sem_descricao'
                             
                             # Processar categorização com IA
+                            logging.debug(f"Conteúdo de 'texto' antes de extrair_ementa: {item.get('texto', '')}")
                             ementa_extraida = extrair_ementa(item.get('texto', ''))
                             texto_para_categorizar = ementa_extraida if ementa_extraida else item.get('texto', '')
+
+                            # Ignorar documentos com conteúdo indesejado
+                            if "Não foi possível extrair conteúdo do documento" in texto_para_categorizar:
+                                logging.info(f"Documento ignorado devido ao conteúdo indesejado: {vector_id}")
+                                continue # Pula para o próximo item
                             
                             if texto_para_categorizar:
                                 openai_api_key = os.getenv("OPENAI_API_KEY")
                                 if openai_api_key:
-                                    resultado_categorizacao = processar_com_ia(texto_para_categorizar, openai_api_key, categorias_disponiveis)
+                                    categorias_csv_path = os.path.join(os.path.dirname(__file__), 'docs', 'categorias.csv')
+                                    resultado_categorizacao = processar_com_ia(item, texto_para_categorizar, openai_api_key, categories_file_id, payload_uri)
                                     if resultado_categorizacao:
-                                        item['categoria_id'] = resultado_categorizacao.get('categoria_id', 'sem_categoria')
-                                        item['desc_categoria'] = resultado_categorizacao.get('desc_categoria', 'sem_categoria')
-                                        logging.info(f"Categoria identificada: {resultado_categorizacao}")
+                                        ia_categoria_id = resultado_categorizacao.get('categoria_id', 'sem_categoria')
+                                        ia_desc_categoria = resultado_categorizacao.get('desc_categoria', 'sem_categoria')
+                                        categories_file_id = resultado_categorizacao.get('categories_file_id', categories_file_id) # Atualiza o file_id
+                                        logging.debug(f"IA retornou: categoria_id='{ia_categoria_id}', desc_categoria='{ia_desc_categoria}'")
+
+                                        item['categoria_id'] = ia_categoria_id
+                                        item['desc_categoria'] = ia_desc_categoria
+                                        logging.info(f"Categoria identificada e validada pela IA: ID={item['categoria_id']}, Descrição={item['desc_categoria']}")
                                 
                                     # Gerar descrição com IA
                                     descricao_gerada = gerar_descricao_com_ia(texto_para_categorizar, openai_api_key)
@@ -227,11 +302,12 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 else:
                                     logging.error("Erro: Variável de ambiente OPENAI_API_KEY não configurada. Categorização e descrição IA serão ignoradas.")
                                 
-                            all_results.append(item) # Always add item to all_results
+
                             
                             # Lógica de upsert no Pinecone após categorização (condicional a not only_csv)
                             if not only_csv:
-                                namespace = item.get('categoria_id', 'geral').lower()
+                                namespace_raw = item.get('categoria_id', 'geral')
+                                namespace = sanitize_string_for_pinecone(namespace_raw)
                                 logging.info(f"Namespace para upsert no Pinecone: '{namespace}' (categoria_id: {item.get('categoria_id')})")
                                 # TODO: Substituir 'dummy_vector' por embeddings reais gerados pelo modelo SentenceTransformer.
                                 embeddings = model.encode(texto_para_categorizar).tolist()
@@ -242,26 +318,25 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
                             processed_items_count += 1 # Increment count once per item
-                        # Manter geração de CSV e logs
-                        if all_results:
+
+                            # Manter geração de CSV e logs
                             output_base_dir = os.path.join(os.path.dirname(__file__), 'output')
-                            categoria_dir = os.path.join(output_base_dir, item.get('desc_categoria', 'geral').replace(' ', '_').replace('/', '_').lower())
+                            categoria_dir = os.path.join(output_base_dir, item.get('categoria_id', 'geral').replace(' ', '_').replace('/', '_').lower())
                             os.makedirs(categoria_dir, exist_ok=True)
                         
                             data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            descricao_breve = item.get('descricao_ia', 'sem_descricao').replace(' ', '_').replace('/', '_')
-                            csv_file_path = os.path.join(categoria_dir, f"relatorio_{descricao_breve}_{data_hora}.csv")
+                            csv_file_path = os.path.join(categoria_dir, f"relatorio_{data_hora}.csv")
                             
                             # Escrever cabeçalho se o arquivo não existir
                             if not os.path.exists(csv_file_path):
                                 with open(csv_file_path, 'w', newline='', encoding='utf-8') as f:
-                                    writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
+                                    writer = csv.DictWriter(f, fieldnames=item.keys())
                                     writer.writeheader()
                             
                             # Anexar dados
                             with open(csv_file_path, 'a', newline='', encoding='utf-8') as f:
-                                writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
-                                writer.writerows(all_results)
+                                writer = csv.DictWriter(f, fieldnames=item.keys())
+                                writer.writerow(item)
                             logging.info(f"Dados salvos em {csv_file_path}")
 
                         if test and processed_items_count >= 3:
@@ -278,6 +353,32 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
             if test and processed_items_count >= 3:
                 break
     logging.info("request_singular finalizado.")
+    
+def log_ai_interaction(input_text, raw_ai_response, categoria_id, desc_categoria, payload_uri):
+    """
+    Registra a interação da IA em um arquivo JSON na pasta interations_ai.
+    """
+    log_dir = os.path.join(os.path.dirname(__file__), 'logs', 'interations_ai')
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    log_file_path = os.path.join(log_dir, f"ai_interaction_{timestamp}.json")
+
+    interaction_data = {
+        "timestamp": datetime.now().isoformat(),
+        "input_text": input_text,
+        "raw_ai_response": raw_ai_response,
+        "categoria_id": categoria_id,
+        "desc_categoria": desc_categoria,
+        "payload_uri": payload_uri
+    }
+
+    try:
+        with open(log_file_path, 'w', encoding='utf-8') as f:
+            json.dump(interaction_data, f, ensure_ascii=False, indent=4)
+        logging.info(f"Interação da IA registrada em: {log_file_path}")
+    except Exception as e:
+        logging.error(f"Erro ao registrar interação da IA: {e}")
+
 def load_tribunais(tribunal_a_validar=None):
     """
     Carrega a lista de tribunais do arquivo JSON.
@@ -332,7 +433,7 @@ def extrair_ementa(texto):
         return match.group(1).strip()
     return ""
 
-def processar_com_ia(texto, api_key, categorias_disponiveis):
+def processar_com_ia(item, texto, api_key, categories_file_id, payload_uri):
     """Processa o texto usando a API da OpenAI para categorizar."""
     pasta_configs = os.path.join(os.path.dirname(__file__), 'prompts')
     prompt_categoria_path = os.path.join(pasta_configs, 'prompt_categoria.txt')
@@ -341,17 +442,13 @@ def processar_com_ia(texto, api_key, categorias_disponiveis):
         with open(prompt_categoria_path, 'r', encoding='utf-8') as file:
             prompt_base = file.read()
 
-        # Formatar as categorias disponíveis para o prompt
-        categorias_formatadas = "\n".join([f"- {cat['codigo_categoria']}: {cat['desc_categoria']}" for cat in categorias_disponiveis])
         prompt_final = f"""{prompt_base}
-
-Categorias disponíveis:
-{categorias_formatadas}
 
 ------------------------------------
 Este é o texto a ser analisado:
 {texto}
 ------------------------------------"""
+        logging.info(f"Prompt final enviado para a IA: {prompt_final}")
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -368,6 +465,7 @@ Este é o texto a ser analisado:
                 thread_url = "https://api.openai.com/v1/threads"
                 thread_response = requests.post(thread_url, headers=headers)
                 thread_data = thread_response.json()
+                logging.info(f"Dados brutos da thread da IA: {thread_data}")
                 thread_id = thread_data.get("id")
                 if not thread_id:
                     logging.error(f"Erro ao criar a Thread para categorização: {thread_data}")
@@ -439,6 +537,7 @@ Este é o texto a ser analisado:
         messages_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
         messages_response = requests.get(messages_url, headers=headers)
         messages_data = messages_response.json()
+        logging.debug(f"Resposta completa da API da IA: {messages_data}")
 
         value = None
         if messages_data.get("data"):
@@ -449,43 +548,68 @@ Este é o texto a ser analisado:
                     value = first_content.get("text", {}).get("value")
 
         if value:
-            logging.info(f"Categoria identificada pela IA: {value}")
-            # Tentar parsear o JSON retornado pela IA
+            logging.info(f"Categoria identificada pela IA (valor bruto): {value}")
+            ia_categoria_id = "N/A"
+            ia_desc_categoria = "N/A"
             try:
-                categoria_ia = json.loads(value)
-                logging.info(f"JSON da categoria da IA decodificado: {categoria_ia}")
-                # Garantir que as chaves esperadas existam
-                categoria_id_ia = categoria_ia.get("categoria_id")
-                desc_categoria_ia = categoria_ia.get("desc_categoria")
-                logging.info(f"categoria_id_ia: {categoria_id_ia}, desc_categoria_ia: {desc_categoria_ia}")
+                ai_response_json = json.loads(value)
+                ia_categoria_id = ai_response_json.get("categoria_id", "N/A")
+                ia_desc_categoria = ai_response_json.get("desc_categoria", "N/A")
 
-                # Verificar se a categoria retornada pela IA já existe nas categorias disponíveis
-                categoria_encontrada = next((cat for cat in categorias_disponiveis if cat['codigo_categoria'] == categoria_id_ia), None)
-
-                if categoria_encontrada:
-                    logging.info(f"Categoria '{categoria_id_ia}' encontrada nas categorias disponíveis.")
-                    # Se a categoria existe, usar a descrição da categoria existente
+                if ia_categoria_id == "NAO_CLASSIFICADO":
+                    logging.warning(f"IA não classificou o item: {item} - Motivo: {ia_desc_categoria}")
+                    log_ai_interaction(texto, value, ia_categoria_id, ia_desc_categoria, payload_uri)
                     return {
-                        "categoria_id": categoria_encontrada['codigo_categoria'],
-                        "desc_categoria": categoria_encontrada['desc_categoria']
+                        "categoria_id": "NAO_CLASSIFICADO",
+                        "desc_categoria": ia_desc_categoria,
+                        "categories_file_id": categories_file_id
+                    }
+                elif ia_categoria_id and ia_categoria_id.startswith("[SUGESTAO_DE_NOVA_CATEGORIA]"):
+                    suggested_category = ia_desc_categoria if ia_desc_categoria else ia_categoria_id.replace("[SUGESTAO_DE_NOVA_CATEGORIA]", "").strip()
+                    
+                    update_ignored_categories_json(suggested_category)
+                    log_ai_interaction(texto, value, "NAO_CLASSIFICADO", suggested_category, payload_uri)
+                    return {
+                        "categoria_id": "NAO_CLASSIFICADO", # Retorna como NAO_CLASSIFICADO para processamento posterior
+                        "desc_categoria": suggested_category,
+                        "categories_file_id": categories_file_id
+                    }
+                elif ia_categoria_id and ia_desc_categoria:
+                    logging.info(f"IA retornou categoria: {ia_categoria_id} - {ia_desc_categoria}")
+                    log_ai_interaction(texto, value, ia_categoria_id, ia_desc_categoria, payload_uri)
+                    return {
+                        "categoria_id": ia_categoria_id,
+                        "desc_categoria": ia_desc_categoria,
+                        "categories_file_id": categories_file_id
                     }
                 else:
-                    logging.info(f"Categoria '{categoria_id_ia}' NÃO encontrada nas categorias disponíveis. Usando o que a IA retornou.")
-                    # Se a categoria não existe, usar o que a IA retornou (nova categoria)
+                    logging.warning(f"Resposta da IA em formato inesperado ou incompleto: {value}")
+                    log_ai_interaction(texto, value, "NAO_CLASSIFICADO", "Não Classificado")
                     return {
-                        "categoria_id": categoria_id_ia,
-                        "desc_categoria": desc_categoria_ia
+                        "categoria_id": "NAO_CLASSIFICADO",
+                        "desc_categoria": "Não Classificado",
+                        "categories_file_id": categories_file_id
                     }
             except json.JSONDecodeError:
-                logging.error(f"Erro ao decodificar JSON da categoria da IA: {value}")
-                return {"categoria_id": None, "desc_categoria": None}
+                logging.error(f"Erro ao decodificar JSON da resposta da IA: {value}")
+                log_ai_interaction(texto, value, "NAO_CLASSIFICADO", "Não Classificado")
+                return {
+                    "categoria_id": "NAO_CLASSIFICADO",
+                    "desc_categoria": "Não Classificado",
+                    "categories_file_id": categories_file_id
+                }
         else:
-            logging.warning("Nenhuma categoria de valor da IA.")
-            return {"categoria_id": None, "desc_categoria": None}
+            logging.warning("IA não retornou nenhum valor para categorização.")
+            log_ai_interaction(texto, value, "NAO_CLASSIFICADO", "Não Classificado")
+            return {
+                "categoria_id": "NAO_CLASSIFICADO",
+                "desc_categoria": "Não Classificado",
+                "categories_file_id": categories_file_id
+            }
 
     except Exception as e:
         logging.error(f"Erro geral na categorização por IA: {e}")
-        return {"categoria_id": None, "desc_categoria": None}
+        return {"categoria_id": None, "desc_categoria": None, "categories_file_id": categories_file_id}
 
 def gerar_descricao_com_ia(texto, api_key):
     """Processa o texto usando a API da OpenAI para gerar uma descrição."""
@@ -625,4 +749,4 @@ if __name__ == "__main__":
 
     categorias_disponiveis = load_categorias()
 
-    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunais, categorias_disponiveis, args.only_csv, args.test)
+    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunais, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
