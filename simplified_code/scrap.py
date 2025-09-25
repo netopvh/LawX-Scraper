@@ -15,6 +15,7 @@ load_dotenv()
 
 from datetime import datetime, timedelta
 from pinecone import Pinecone, ServerlessSpec
+from pinecone.exceptions import PineconeApiException
 from sentence_transformers import SentenceTransformer
 
 def load_additional_metadata(file_path):
@@ -24,18 +25,30 @@ def load_additional_metadata(file_path):
             return json.load(f)
     return {}
 
-# Configuração do logging
+# Configuração de logging
 log_dir = "logs"
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
+os.makedirs(log_dir, exist_ok=True)
 
 def get_log_file_path():
-    now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
-    current_time = now.strftime("%H-%M-%S")
-    return os.path.join(log_dir, f"log_{today}_{current_time}.log")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return os.path.join(log_dir, f"log_{timestamp}.log")
 
+# Removendo a configuração básica e adicionando handlers
+log_file_path = get_log_file_path()
+logging.getLogger().handlers = [] # Clear any existing handlers
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# File handler
+file_handler = logging.FileHandler(log_file_path)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(file_handler)
+
+# Stream handler for console output
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setLevel(logging.DEBUG)
+stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(stream_handler)
 
 model = SentenceTransformer('intfloat/multilingual-e5-large')
 
@@ -59,28 +72,49 @@ def save_backup_vetorizado(file_path, data):
     except Exception as e:
         logging.error(f"Erro ao salvar backup do arquivo vetorizado: {e}")
 
-def deploy(index_name, namespace, ids, vectors, metadata):
+def _initialize_pinecone_client(dimension=None):
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    pinecone_environment = os.getenv("PINECONE_ENVIRONMENT")
+    pinecone_cloud = os.getenv("PINECONE_CLOUD")
+    pinecone_index_name = os.getenv("PINECONE_INDEX_NAME")
+
+    if not all([pinecone_api_key, pinecone_environment, pinecone_cloud, pinecone_index_name]):
+        logging.error("Erro: Variáveis de ambiente do Pinecone não configuradas corretamente.")
+        return None, None
+
+    pc = Pinecone(api_key=pinecone_api_key)
+
+    try:
+        if pinecone_index_name not in pc.list_indexes():
+            if dimension is None:
+                logging.error("Erro: Dimensão do índice não fornecida para criação do índice Pinecone.")
+                return None, None
+            pc.create_index(
+                name=pinecone_index_name,
+                dimension=dimension,
+                metric='cosine',
+                spec=ServerlessSpec(cloud=pinecone_cloud, region=pinecone_environment)
+            )
+            logging.info(f"Índice Pinecone '{pinecone_index_name}' criado.")
+        else:
+            logging.info(f"Índice Pinecone '{pinecone_index_name}' já existe. Conectando-se a ele.")
+    except PineconeApiException as e:
+        if e.status == 409 and "ALREADY_EXISTS" in e.body:
+            logging.warning(f"Índice Pinecone '{pinecone_index_name}' já existe. Conectando-se a ele.")
+        else:
+            logging.error(f"Erro ao criar/conectar ao índice Pinecone: {e}")
+            return None, None
+    except Exception as e:
+        logging.error(f"Erro inesperado ao inicializar Pinecone: {e}")
+        return None, None
+
+    return pc, pinecone_index_name
+
+def deploy(namespace=None, ids=None, vectors=None, metadata=None):
     """Realiza o upsert dos embeddings no Pinecone."""
     try:
-        pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        pinecone_environment = os.getenv("PINECONE_ENVIRONMENT")
-
-        if not all([pinecone_api_key, pinecone_environment]):
-            logging.error("Erro: Variáveis de ambiente do Pinecone não configuradas corretamente para deploy.")
-            return False
-
-        pc = Pinecone(api_key=pinecone_api_key)
-
-        if index_name not in pc.list_indexes():
-            pc.create_index(
-                name=index_name,
-                dimension=len(vectors[0]),
-                metric='cosine',
-                spec=ServerlessSpec(cloud='aws', region=pinecone_environment)
-            )
-            logging.info(f"Índice Pinecone '{index_name}' criado.")
-
-        index = pc.Index(index_name)
+        pc, pinecone_index_name = _initialize_pinecone_client(dimension=1024)
+        index = pc.Index(pinecone_index_name)
         index.upsert(vectors=zip(ids, vectors, metadata), namespace=namespace)
         logging.info(f"Embeddings inseridos no Pinecone para o namespace '{namespace}'.")
         return True
@@ -100,18 +134,13 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
 
     # Configuração do Pinecone
     if not only_csv:
-        pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        pinecone_environment = os.getenv("PINECONE_ENVIRONMENT")
-        pinecone_index_name = os.getenv("PINECONE_INDEX_NAME")
-
-        if not all([pinecone_api_key, pinecone_environment, pinecone_index_name]):
-            logging.error("Erro: Variáveis de ambiente do Pinecone não configuradas corretamente.")
+        pc, pinecone_index_name = _initialize_pinecone_client(dimension=1024)
+        if pc is None or pinecone_index_name is None:
             return
 
-        pc = Pinecone(api_key=pinecone_api_key)
         index = pc.Index(pinecone_index_name)
 
-    lista_datas = get_dates_between(data_inicio, data_fim)
+        lista_datas = get_dates_between(data_inicio, data_fim)
 
     # Lógica de filtragem de tribunais
     tribunais_para_pesquisar = []
@@ -202,19 +231,21 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             
                             # Lógica de upsert no Pinecone após categorização (condicional a not only_csv)
                             if not only_csv:
-                                namespace = item.get('categoria_id', 'geral')
-                                dummy_vector = [0.1] * 1536
+                                namespace = item.get('categoria_id', 'geral').lower()
+                                logging.info(f"Namespace para upsert no Pinecone: '{namespace}' (categoria_id: {item.get('categoria_id')})")
+                                # TODO: Substituir 'dummy_vector' por embeddings reais gerados pelo modelo SentenceTransformer.
+                                embeddings = model.encode(texto_para_categorizar).tolist()
                                 cleaned_metadata = {k: (str(v) if v is not None else "") for k, v in item.items()}
                                 additional_metadata = load_additional_metadata(r"d:\Workspace\LawX-Scraper\simplified_code\docs\metadata.json")
                                 cleaned_metadata.update(additional_metadata)
-                                index.upsert(vectors=[{"id": vector_id, "values": dummy_vector, "metadata": cleaned_metadata}], namespace=namespace)
+                                index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
-                            
+
                             processed_items_count += 1 # Increment count once per item
                         # Manter geração de CSV e logs
                         if all_results:
                             output_base_dir = os.path.join(os.path.dirname(__file__), 'output')
-                            categoria_dir = os.path.join(output_base_dir, item.get('desc_categoria', 'geral').replace(' ', '_').replace('/', '_'))
+                            categoria_dir = os.path.join(output_base_dir, item.get('desc_categoria', 'geral').replace(' ', '_').replace('/', '_').lower())
                             os.makedirs(categoria_dir, exist_ok=True)
                         
                             data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -422,20 +453,24 @@ Este é o texto a ser analisado:
             # Tentar parsear o JSON retornado pela IA
             try:
                 categoria_ia = json.loads(value)
+                logging.info(f"JSON da categoria da IA decodificado: {categoria_ia}")
                 # Garantir que as chaves esperadas existam
                 categoria_id_ia = categoria_ia.get("categoria_id")
                 desc_categoria_ia = categoria_ia.get("desc_categoria")
+                logging.info(f"categoria_id_ia: {categoria_id_ia}, desc_categoria_ia: {desc_categoria_ia}")
 
                 # Verificar se a categoria retornada pela IA já existe nas categorias disponíveis
                 categoria_encontrada = next((cat for cat in categorias_disponiveis if cat['codigo_categoria'] == categoria_id_ia), None)
 
                 if categoria_encontrada:
+                    logging.info(f"Categoria '{categoria_id_ia}' encontrada nas categorias disponíveis.")
                     # Se a categoria existe, usar a descrição da categoria existente
                     return {
                         "categoria_id": categoria_encontrada['codigo_categoria'],
                         "desc_categoria": categoria_encontrada['desc_categoria']
                     }
                 else:
+                    logging.info(f"Categoria '{categoria_id_ia}' NÃO encontrada nas categorias disponíveis. Usando o que a IA retornou.")
                     # Se a categoria não existe, usar o que a IA retornou (nova categoria)
                     return {
                         "categoria_id": categoria_id_ia,
