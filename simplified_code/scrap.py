@@ -1,11 +1,12 @@
+import os
 import re
 import requests
 import json
+from bs4 import BeautifulSoup
 
 import argparse
 import uuid
 import csv
-import os
 import logging
 import sys
 import pandas as pd
@@ -14,6 +15,11 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Configuração de logging
+log_dir = "logs"
+os.makedirs(log_dir, exist_ok=True)
+
 
 client = OpenAI()
 
@@ -60,9 +66,23 @@ def abreviar_categoria(texto):
     abreviacao = "".join(word[0] for word in palavras if word)
     return abreviacao[:10] # Limita a 10 caracteres para o código
 
-# Configuração de logging
-log_dir = "logs"
-os.makedirs(log_dir, exist_ok=True)
+def load_valid_categories(file_path):
+    """Carrega as categorias válidas do arquivo CSV."""
+    valid_categories = {}
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f, delimiter=',')
+            for row in reader:
+                valid_categories[row['categoria']] = row['desc_categoria']
+    except FileNotFoundError:
+        logging.error(f"Arquivo de categorias não encontrado: {file_path}")
+    except Exception as e:
+        logging.error(f"Erro ao carregar categorias do CSV: {e}")
+    return valid_categories
+
+def get_category_description(category_id, valid_categories):
+    """Retorna a descrição de uma categoria a partir das categorias válidas."""
+    return valid_categories.get(category_id, "Categoria não encontrada ou inválida.")
 
 def get_log_file_path():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -86,24 +106,10 @@ logging.getLogger().addHandler(stream_handler)
 
 
 
-def update_ignored_categories_json(category_name):
-    ignored_categories_json_path = os.path.join(os.path.dirname(__file__), 'docs', "ignored_categories_count.json")
-    ignored_categories_data = {}
-    if os.path.exists(ignored_categories_json_path):
-        try:
-            with open(ignored_categories_json_path, 'r', encoding='utf-8') as f:
-                ignored_categories_data = json.load(f)
-        except json.JSONDecodeError:
-            logging.error(f"Erro ao decodificar {ignored_categories_json_path}. Criando um novo arquivo.")
-            ignored_categories_data = {}
 
-    ignored_categories_data[category_name] = ignored_categories_data.get(category_name, 0) + 1
 
-    with open(ignored_categories_json_path, 'w', encoding='utf-8') as f:
-        json.dump(ignored_categories_data, f, ensure_ascii=False, indent=4)
-    logging.info(f"Contagem de categorias ignoradas atualizada para '{category_name}'.")
-
-CATEGORIES_FILE_PATH = r"d:\Workspace\LawX-Scraper\simplified_code\docs\categorias.csv"
+load_dotenv()
+CATEGORIES_FILE_PATH = os.getenv('CATEGORIES_CSV_PATH', r"./docs/categorias.csv")
 categories_file_id = upload_categories_file(CATEGORIES_FILE_PATH)
 
 if not categories_file_id:
@@ -274,6 +280,17 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             ementa_extraida = extrair_ementa(item.get('texto', ''))
                             texto_para_categorizar = ementa_extraida if ementa_extraida else item.get('texto', '')
 
+                            # Se o texto for o placeholder, tenta extrair do link
+                            if "Não foi possível extrair conteúdo do documento" in texto_para_categorizar and item.get('link'):
+                                logging.info(f"Placeholder detectado. Tentando extrair conteúdo de: {item['link']}")
+                                extracted_text = fetch_content_from_url(item['link'])
+                                if extracted_text:
+                                    item['texto'] = extracted_text  # Atualiza o item['texto'] com o conteúdo real
+                                    texto_para_categorizar = extracted_text # Atualiza para categorização
+                                    logging.info("Conteúdo extraído com sucesso do link.")
+                                else:
+                                    logging.warning("Não foi possível extrair conteúdo do link. Mantendo placeholder.")
+
                             # Ignorar documentos com conteúdo indesejado
                             if "Não foi possível extrair conteúdo do documento" in texto_para_categorizar:
                                 logging.info(f"Documento ignorado devido ao conteúdo indesejado: {vector_id}")
@@ -282,8 +299,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             if texto_para_categorizar:
                                 openai_api_key = os.getenv("OPENAI_API_KEY")
                                 if openai_api_key:
-                                    categorias_csv_path = os.path.join(os.path.dirname(__file__), 'docs', 'categorias.csv')
-                                    resultado_categorizacao = processar_com_ia(item, texto_para_categorizar, openai_api_key, categories_file_id, payload_uri)
+                                    resultado_categorizacao = processar_com_ia(texto_para_categorizar, categories_file_id, payload_uri)
                                     if resultado_categorizacao:
                                         ia_categoria_id = resultado_categorizacao.get('categoria_id', 'sem_categoria')
                                         ia_desc_categoria = resultado_categorizacao.get('desc_categoria', 'sem_categoria')
@@ -295,7 +311,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                         logging.info(f"Categoria identificada e validada pela IA: ID={item['categoria_id']}, Descrição={item['desc_categoria']}")
                                 
                                     # Gerar descrição com IA
-                                    descricao_gerada = gerar_descricao_com_ia(texto_para_categorizar, openai_api_key)
+                                    descricao_gerada = gerar_descricao_com_ia(texto_para_categorizar)
                                     if descricao_gerada:
                                         item['descricao_ia'] = descricao_gerada
                                         logging.info(f"Descrição gerada pela IA: {descricao_gerada}")
@@ -433,14 +449,23 @@ def extrair_ementa(texto):
         return match.group(1).strip()
     return ""
 
-def processar_com_ia(item, texto, api_key, categories_file_id, payload_uri):
+def processar_com_ia(texto, categories_file_id, payload_uri):
     """Processa o texto usando a API da OpenAI para categorizar."""
     pasta_configs = os.path.join(os.path.dirname(__file__), 'prompts')
     prompt_categoria_path = os.path.join(pasta_configs, 'prompt_categoria.txt')
+    
+    # Carregar categorias válidas do CSV
+    categorias_csv_path = os.path.join(os.path.dirname(__file__), 'docs', 'categorias.csv')
+    valid_categories = load_valid_categories(categorias_csv_path)
 
     try:
+        # Carrega o prompt do arquivo
         with open(prompt_categoria_path, 'r', encoding='utf-8') as file:
             prompt_base = file.read()
+
+        # Format valid categories for the prompt
+        valid_categories_list = ", ".join(f"'{cat}'" for cat in valid_categories.keys())
+        prompt_base = prompt_base.format(valid_categories_list=valid_categories_list)
 
         prompt_final = f"""{prompt_base}
 
@@ -449,103 +474,47 @@ Este é o texto a ser analisado:
 {texto}
 ------------------------------------"""
         logging.info(f"Prompt final enviado para a IA: {prompt_final}")
+        logging.info(f"OPENAI_ASSISTANT_ID: {os.getenv("OPENAI_ASSISTANT_ID")}")
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "OpenAI-Beta": "assistants=v2"
-        }
-        assistant_id = 'asst_7HnwPIVsEXEtiFNU68ri2TRs' # ID do assistente, pode ser configurável
-
-        # Criação da Thread
-        thread_start = False
-        thread_id = None
-        while not thread_start:
-            try:
-                thread_url = "https://api.openai.com/v1/threads"
-                thread_response = requests.post(thread_url, headers=headers)
-                thread_data = thread_response.json()
-                logging.info(f"Dados brutos da thread da IA: {thread_data}")
-                thread_id = thread_data.get("id")
-                if not thread_id:
-                    logging.error(f"Erro ao criar a Thread para categorização: {thread_data}")
-                    time.sleep(5) # Espera antes de tentar novamente
-                else:
-                    logging.info(f"Thread para categorização criada com sucesso. ID: {thread_id}")
-                    thread_start = True
-            except Exception as e:
-                logging.error(f"Erro ao criar a Thread para categorização: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
-
-        # Adicionar mensagem à Thread
-        message_ok = False
-        while not message_ok:
-            try:
-                message_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
-                message_data = {
+        # Cria um thread e adiciona a mensagem
+        thread = client.beta.threads.create(
+            messages=[
+                {
                     "role": "user",
-                    "content": prompt_final
+                    "content": prompt_final,
                 }
-                message_response = requests.post(message_url, headers=headers, json=message_data)
-                if message_response.status_code != 200:
-                    logging.error(f"Erro ao adicionar mensagem à Thread para categorização: {message_response.json()}")
-                    time.sleep(5) # Espera antes de tentar novamente
-                else:
-                    logging.info("Mensagem para categorização adicionada ao Thread com sucesso.")
-                    message_ok = True
-            except Exception as e:
-                logging.error(f"Erro ao adicionar mensagem à Thread para categorização: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
+            ]
+        )
 
-        # Iniciar o Run
-        run_start = False
-        run_id = None
-        while not run_start:
-            try:
-                run_url = f"https://api.openai.com/v1/threads/{thread_id}/runs"
-                run_data = {"assistant_id": assistant_id}
-                run_response = requests.post(run_url, headers=headers, json=run_data)
-                run_data = run_response.json()
-                run_id = run_data.get("id")
-                if not run_id:
-                    logging.error(f"Erro ao iniciar o Run para categorização: {run_data}")
-                    time.sleep(5) # Espera antes de tentar novamente
-                else:
-                    logging.info(f"Run para categorização iniciado. ID: {run_id}")
-                    run_start = True
-            except Exception as e:
-                logging.error(f"Erro ao iniciar o Run para categorização: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
+        # Executa o assistente no thread
+        run = client.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=os.getenv("OPENAI_ASSISTANT_ID"), # Certifique-se de que OPENAI_ASSISTANT_ID está no .env
+        )
 
-        # Verificar status do Run
-        run_ok = False
-        while not run_ok:
-            try:
-                run_status_response = requests.get(f"https://api.openai.com/v1/threads/{thread_id}/runs/{run_id}", headers=headers)
-                run_status = run_status_response.json().get("status")
-                if run_status == "completed":
-                    logging.info("Run para categorização concluído com sucesso.")
-                    run_ok = True
-                else:
-                    logging.info(f"Aguardando conclusão do processamento da categorização... Status: {run_status}")
-                    time.sleep(5) # Espera antes de verificar novamente
-            except Exception as e:
-                logging.error(f"Erro ao verificar status do Run para categorização: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
+        # Espera a execução ser concluída
+        while run.status != "completed":
+            time.sleep(1) # Espera 1 segundo antes de verificar novamente
+            run = client.beta.threads.runs.retrieve(
+                thread_id=thread.id,
+                run_id=run.id
+            )
 
-        # Obter mensagens da Thread
-        messages_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
-        messages_response = requests.get(messages_url, headers=headers)
-        messages_data = messages_response.json()
-        logging.debug(f"Resposta completa da API da IA: {messages_data}")
+        # Recupera as mensagens do thread
+        messages_page = client.beta.threads.messages.list(
+            thread_id=thread.id
+        )
+        messages_data = messages_page.data
 
         value = None
-        if messages_data.get("data"):
-            first_message = messages_data["data"][0]
-            if first_message.get("content"):
-                first_content = first_message["content"][0]
-                if first_content.get("type") == "text":
-                    value = first_content.get("text", {}).get("value")
+        if messages_data:
+            # A resposta mais recente do assistente deve ser a primeira mensagem na lista
+            assistant_message = next((m for m in messages_data if m.role == "assistant"), None)
+            if assistant_message and assistant_message.content:
+                for content_block in assistant_message.content:
+                    if content_block.type == "text":
+                        value = content_block.text.value
+                        break
 
         if value:
             logging.info(f"Categoria identificada pela IA (valor bruto): {value}")
@@ -553,181 +522,95 @@ Este é o texto a ser analisado:
             ia_desc_categoria = "N/A"
             try:
                 ai_response_json = json.loads(value)
-                ia_categoria_id = ai_response_json.get("categoria_id", "N/A")
-                ia_desc_categoria = ai_response_json.get("desc_categoria", "N/A")
+                ia_categoria_id = ai_response_json.get("categoria_id", "sem_categoria")
+                ia_desc_categoria = ai_response_json.get("desc_categoria", "Documento não classificado por categoria específica.")
 
-                if ia_categoria_id == "NAO_CLASSIFICADO":
-                    logging.warning(f"IA não classificou o item: {item} - Motivo: {ia_desc_categoria}")
-                    log_ai_interaction(texto, value, ia_categoria_id, ia_desc_categoria, payload_uri)
-                    return {
-                        "categoria_id": "NAO_CLASSIFICADO",
-                        "desc_categoria": ia_desc_categoria,
-                        "categories_file_id": categories_file_id
-                    }
-                elif ia_categoria_id and ia_categoria_id.startswith("[SUGESTAO_DE_NOVA_CATEGORIA]"):
-                    suggested_category = ia_desc_categoria if ia_desc_categoria else ia_categoria_id.replace("[SUGESTAO_DE_NOVA_CATEGORIA]", "").strip()
-                    
-                    update_ignored_categories_json(suggested_category)
-                    log_ai_interaction(texto, value, "NAO_CLASSIFICADO", suggested_category, payload_uri)
-                    return {
-                        "categoria_id": "NAO_CLASSIFICADO", # Retorna como NAO_CLASSIFICADO para processamento posterior
-                        "desc_categoria": suggested_category,
-                        "categories_file_id": categories_file_id
-                    }
-                elif ia_categoria_id and ia_desc_categoria:
-                    logging.info(f"IA retornou categoria: {ia_categoria_id} - {ia_desc_categoria}")
-                    log_ai_interaction(texto, value, ia_categoria_id, ia_desc_categoria, payload_uri)
-                    return {
-                        "categoria_id": ia_categoria_id,
-                        "desc_categoria": ia_desc_categoria,
-                        "categories_file_id": categories_file_id
-                    }
-                else:
-                    logging.warning(f"Resposta da IA em formato inesperado ou incompleto: {value}")
-                    log_ai_interaction(texto, value, "NAO_CLASSIFICADO", "Não Classificado")
-                    return {
-                        "categoria_id": "NAO_CLASSIFICADO",
-                        "desc_categoria": "Não Classificado",
-                        "categories_file_id": categories_file_id
-                    }
-            except json.JSONDecodeError:
-                logging.error(f"Erro ao decodificar JSON da resposta da IA: {value}")
-                log_ai_interaction(texto, value, "NAO_CLASSIFICADO", "Não Classificado")
-                return {
-                    "categoria_id": "NAO_CLASSIFICADO",
-                    "desc_categoria": "Não Classificado",
-                    "categories_file_id": categories_file_id
-                }
+                # Validação da categoria retornada pela IA
+                if ia_categoria_id not in valid_categories:
+                    logging.warning(f"IA retornou categoria inválida: {ia_categoria_id}. Usando 'sem_categoria'.")
+                    ia_categoria_id = "sem_categoria"
+                    ia_desc_categoria = "Documento não classificado por categoria específica."
+
+                log_ai_interaction(texto, value, ia_categoria_id, ia_desc_categoria, payload_uri)
+                return {"categoria_id": ia_categoria_id, "desc_categoria": ia_desc_categoria, "categories_file_id": categories_file_id}
+            except json.JSONDecodeError as e:
+                logging.error(f"Erro ao decodificar JSON da resposta da IA: {e}. Resposta bruta: {value}")
+                log_ai_interaction(texto, value, "erro_json", "Erro ao decodificar JSON", payload_uri)
+                return None
+            except KeyError as e:
+                logging.error(f"Chave ausente na resposta JSON da IA: {e}. Resposta bruta: {value}")
+                log_ai_interaction(texto, value, "erro_json", f"Chave ausente: {e}", payload_uri)
+                return None
         else:
-            logging.warning("IA não retornou nenhum valor para categorização.")
-            log_ai_interaction(texto, value, "NAO_CLASSIFICADO", "Não Classificado")
-            return {
-                "categoria_id": "NAO_CLASSIFICADO",
-                "desc_categoria": "Não Classificado",
-                "categories_file_id": categories_file_id
-            }
+            logging.warning("A IA não retornou um valor de categoria válido.")
+            log_ai_interaction(texto, "N/A", "sem_categoria", "IA não retornou valor válido", payload_uri)
+            return None
 
     except Exception as e:
-        logging.error(f"Erro geral na categorização por IA: {e}")
-        return {"categoria_id": None, "desc_categoria": None, "categories_file_id": categories_file_id}
+        logging.error(f"Erro inesperado ao processar com IA: {e}")
+        log_ai_interaction(texto, "N/A", "erro_geral", str(e), payload_uri)
+        return None
 
-def gerar_descricao_com_ia(texto, api_key):
-    """Processa o texto usando a API da OpenAI para gerar uma descrição."""
-    pasta_prompts = os.path.join(os.path.dirname(__file__), 'prompts')
-    prompt_descricao_path = os.path.join(pasta_prompts, 'prompt_descricao.txt')
+def gerar_descricao_com_ia(texto):
+    """Gera uma descrição para o texto fornecido usando a API da OpenAI."""
+    pasta_configs = os.path.join(os.path.dirname(__file__), 'prompts')
+    prompt_descricao_path = os.path.join(pasta_configs, 'prompt_descricao.txt')
 
     try:
         with open(prompt_descricao_path, 'r', encoding='utf-8') as file:
-            prompt_descricao = file.read()
+            prompt_base = file.read()
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "OpenAI-Beta": "assistants=v2"
-        }
-        assistant_id = 'asst_7HnwPIVsEXEtiFNU68ri2TRs' # ID do assistente, pode ser configurável
+        prompt_final = f"""{prompt_base}
 
-        # Criação da Thread
-        thread_start = False
-        thread_id = None
-        while not thread_start:
-            try:
-                thread_url = "https://api.openai.com/v1/threads"
-                thread_response = requests.post(thread_url, headers=headers)
-                thread_data = thread_response.json()
-                thread_id = thread_data.get("id")
-                if not thread_id:
-                    logging.error(f"Erro ao criar a Thread para descrição: {thread_data}")
-                    time.sleep(5) # Espera antes de tentar novamente
-                else:
-                    logging.info(f"Thread para descrição criada com sucesso. ID: {thread_id}")
-                    thread_start = True
-            except Exception as e:
-                logging.error(f"Erro ao criar a Thread para descrição: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
-
-        # Adicionar mensagem à Thread
-        message_ok = False
-        while not message_ok:
-            try:
-                message_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
-                message_data = {
-                    "role": "user",
-                    "content": f"""{prompt_descricao}
 ------------------------------------
 Este é o texto a ser analisado:
 {texto}
 ------------------------------------"""
-                }
-                message_response = requests.post(message_url, headers=headers, json=message_data)
-                if message_response.status_code != 200:
-                    logging.error(f"Erro ao adicionar mensagem à Thread para descrição: {message_response.json()}")
-                    time.sleep(5) # Espera antes de tentar novamente
-                else:
-                    logging.info("Mensagem para descrição adicionada ao Thread com sucesso.")
-                    message_ok = True
-            except Exception as e:
-                logging.error(f"Erro ao adicionar mensagem à Thread para descrição: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
+        logging.info(f"Prompt final enviado para a IA para descrição: {prompt_final}")
 
-        # Iniciar o Run
-        run_start = False
-        run_id = None
-        while not run_start:
-            try:
-                run_url = f"https://api.openai.com/v1/threads/{thread_id}/runs"
-                run_data = {"assistant_id": assistant_id}
-                run_response = requests.post(run_url, headers=headers, json=run_data)
-                run_data = run_response.json()
-                run_id = run_data.get("id")
-                if not run_id:
-                    logging.error(f"Erro ao iniciar o Run para descrição: {run_data}")
-                    time.sleep(5) # Espera antes de tentar novamente
-                else:
-                    logging.info(f"Run para descrição iniciado. ID: {run_id}")
-                    run_start = True
-            except Exception as e:
-                logging.error(f"Erro ao iniciar o Run para descrição: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
+        assistant_id = 'asst_7HnwPIVsEXEtiFNU68ri2TRs' # ID do assistente, pode ser configurável
 
-        # Verificar status do Run
-        run_ok = False
-        while not run_ok:
-            try:
-                run_status_response = requests.get(f"https://api.openai.com/v1/threads/{thread_id}/runs/{run_id}", headers=headers)
-                run_status = run_status_response.json().get("status")
-                if run_status == "completed":
-                    logging.info("Run para descrição concluído com sucesso.")
-                    run_ok = True
-                else:
-                    logging.info(f"Aguardando conclusão do processamento da descrição... Status: {run_status}")
-                    time.sleep(5) # Espera antes de verificar novamente
-            except Exception as e:
-                logging.error(f"Erro ao verificar status do Run para descrição: {e}")
-                time.sleep(5) # Espera antes de tentar novamente
+        thread = client.beta.threads.create()
+        thread_id = thread.id
+        logging.info(f"Thread criada com ID: {thread_id}")
 
-        # Obter mensagens da Thread
-        messages_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
-        messages_response = requests.get(messages_url, headers=headers)
-        messages_data = messages_response.json()
+        client.beta.threads.messages.create(
+            thread_id=thread_id, role="user", content=prompt_final
+        )
+        logging.info("Mensagem adicionada ao thread.")
 
-        value = None
-        if messages_data.get("data"):
-            first_message = messages_data["data"][0]
-            if first_message.get("content"):
-                first_content = first_message["content"][0]
-                if first_content.get("type") == "text":
-                    value = first_content.get("text", {}).get("value")
+        run = client.beta.threads.runs.create(
+            thread_id=thread_id, assistant_id=assistant_id
+        )
+        run_id = run.id
+        logging.info(f"Run criado com ID: {run_id}")
 
-        if value:
-            logging.info(f"Descrição gerada pela IA: {value}")
-            return value.strip()
+        while run.status in ['queued', 'in_progress', 'cancelling']:
+            time.sleep(1)
+            run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
+
+        if run.status == 'completed':
+            messages = client.beta.threads.messages.list(thread_id=thread_id)
+            resposta_ia = ""
+            for msg in messages.data:
+                if msg.role == "assistant":
+                    for content in msg.content:
+                        if content.type == 'text':
+                            resposta_ia = content.text.value
+                            break
+                    if resposta_ia:
+                        break
+            logging.info(f"Resposta da IA para descrição: {resposta_ia}")
+            return resposta_ia
         else:
-            logging.warning("Nenhuma descrição de valor da IA.")
+            logging.error(f"Run para descrição falhou com status: {run.status}")
             return ""
 
+    except FileNotFoundError:
+        logging.error(f"Arquivo de prompt de descrição não encontrado: {prompt_descricao_path}")
+        return ""
     except Exception as e:
-        logging.error(f"Erro geral na geração de descrição por IA: {e}")
+        logging.error(f"Erro geral em gerar_descricao_com_ia: {e}")
         return ""
 
 
@@ -750,3 +633,32 @@ if __name__ == "__main__":
     categorias_disponiveis = load_categorias()
 
     request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunais, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
+
+
+def fetch_content_from_url(url):
+    """Baixa o conteúdo de uma URL e tenta extrair texto.
+    """
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Levanta um erro para códigos de status HTTP ruins (4xx ou 5xx)
+        
+        # Tenta extrair texto de HTML
+        if 'text/html' in response.headers.get('Content-Type', ''):
+            soup = BeautifulSoup(response.content.decode('utf-8'), 'html.parser')
+            # Remove scripts e estilos
+            for script_or_style in soup(['script', 'style']):
+                script_or_style.extract()
+            text = soup.get_text()
+            # Quebra linhas e remove espaços extras
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+            return text
+        else:
+            logging.warning(f"Tipo de conteúdo não suportado para extração de texto: {response.headers.get('Content-Type', '')}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Erro ao baixar conteúdo da URL {url}: {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Erro inesperado ao processar URL {url}: {e}")
