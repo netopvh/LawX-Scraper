@@ -88,23 +88,27 @@ def get_log_file_path():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     return os.path.join(log_dir, f"log_{timestamp}.log")
 
+# Determine if help is requested early to suppress logs
+if any(arg in sys.argv for arg in ['--help', '-h']):
+    log_level = logging.CRITICAL
+else:
+    log_level = logging.DEBUG
+
 # Removendo a configuração básica e adicionando handlers
 log_file_path = get_log_file_path()
 logging.getLogger().handlers = [] # Clear any existing handlers
 
 # File handler
 file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
-file_handler.setLevel(logging.DEBUG)
+file_handler.setLevel(log_level) # Set level based on help request
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logging.getLogger().addHandler(file_handler)
 
 # Stream handler for console output
 stream_handler = logging.StreamHandler(sys.stdout)
-stream_handler.setLevel(logging.DEBUG)
+stream_handler.setLevel(log_level) # Set level based on help request
 stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logging.getLogger().addHandler(stream_handler)
-
-
 
 
 
@@ -116,7 +120,7 @@ if not categories_file_id:
     logging.error("Não foi possível obter o File ID para categorias.csv. Encerrando o script.")
     sys.exit(1)
 
-logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().setLevel(log_level) # Set root logger level based on help request
 
 model = SentenceTransformer('intfloat/multilingual-e5-large')
 
@@ -599,13 +603,18 @@ Este é o texto a ser analisado:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Script de scraping de jurisprudência.")
     parser.add_argument("--data-inicio", help="Data de início no formato DD/MM/AAAA", required=True)
-    parser.add_argument("--data-fim", help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.", default=None)
-    parser.add_argument("--jurisprudencia", help="Termo de jurisprudência a ser procurado", required=True)
+    parser.add_argument("--data-fim", default=None, help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.")
+    parser.add_argument("--jurisprudencia", default="", help="Termo de jurisprudência a ser procurado (opcional). Use --jurisprudencia \"Ementa\" para uma tag, ou --jurisprudencia \"Ementa, Acórdão\" para múltiplas tags. Documentos possíveis em ./config/docs.json")
     parser.add_argument("--tribunal", default="Todos", help="Tribunais a serem pesquisados, separados por vírgula. Ex: 'TJSP,TJMG' ou 'Todos'")
     parser.add_argument("--only-csv", action="store_true", help="Se presente, o script gerará apenas CSVs e não usará o Pinecone.")
     parser.add_argument("--test", action="store_true", help="Se presente, o script limitará o scraping a 10 escritas para testes.")
 
     args = parser.parse_args()
+
+    # Adiciona a lógica para exibir ajuda e sair se --help ou -h for fornecido
+    if any(arg in sys.argv for arg in ['--help', '-h']):
+        parser.print_help()
+        sys.exit(0)
 
     if args.data_fim is None:
         args.data_fim = args.data_inicio
