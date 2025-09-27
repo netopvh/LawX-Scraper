@@ -232,7 +232,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
         for tribunal_sigla in tribunais_para_pesquisar:
             page = 1
             while True:
-                base_url = 'https://comunicaapi.pje.jus.br/api/v1/comunicacao'
+                base_url = os.getenv('SCRAP_BASE_URL')
                 params = {
                     "pagina": page,
                     "itensPorPagina": 5,
@@ -601,7 +601,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-inicio", help="Data de início no formato DD/MM/AAAA", required=True)
     parser.add_argument("--data-fim", help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.", default=None)
     parser.add_argument("--jurisprudencia", help="Termo de jurisprudência a ser procurado", required=True)
-    parser.add_argument("--tribunais", default="Todos", help="Tribunais a serem pesquisados, separados por vírgula. Ex: 'TJSP,TJMG' ou 'Todos'")
+    parser.add_argument("--tribunal", default="Todos", help="Tribunais a serem pesquisados, separados por vírgula. Ex: 'TJSP,TJMG' ou 'Todos'")
     parser.add_argument("--only-csv", action="store_true", help="Se presente, o script gerará apenas CSVs e não usará o Pinecone.")
     parser.add_argument("--test", action="store_true", help="Se presente, o script limitará o scraping a 10 escritas para testes.")
 
@@ -614,7 +614,7 @@ if __name__ == "__main__":
 
     categorias_disponiveis = load_categorias()
 
-    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunais, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
+    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunal, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
 
 
 def fetch_content_from_url(url):
