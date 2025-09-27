@@ -25,6 +25,7 @@ O LawX Scraper é uma ferramenta de web scraping de alto desempenho que utiliza 
 ## Instalação
 
 ### Instalação via UV (Recomendado)
+
 ```bash
 # Clone o repositório
 git clone [url-do-repositorio]
@@ -51,10 +52,12 @@ uv run app_code_120.py #inicialização direta (inica o projeto sem intermediari
 ```
 
 # Executar a aplicação (usando Python)
+
 python main.py (simplificado)
 python app_code_120.py (classe principal)
 
 ### Outros meios (não revisados)
+
 ```bash
 
 # instalador automatizado (não revisado)
@@ -64,17 +67,16 @@ python app_code_120.py (classe principal)
 app_scrapping.bat
 ```
 
-
-
 ## Configuração
 
 1. **Configuração inicial**: Execute o aplicativo e configure:
+
    - Chave de API OpenAI (para análise com IA)
    - Diretório de downloads
    - Tribunais alvo
    - Período de busca
-
 2. **Arquivos de configuração**:
+
    - `configurações/configs.json`: Configurações principais
    - `configurações/tribunais.json`: Lista de tribunais disponíveis
    - `configurações/docs.json`: Tipos de documentos aceitos
@@ -82,12 +84,15 @@ app_scrapping.bat
 ## Uso
 
 ### Interface Gráfica
+
 Execute o aplicando principal:
+
 ```bash
 python app_code_120.py
 ```
 
 ### Interface de Linha de Comando
+
 ```bash
 # Executar scraping direto
 python main.py
@@ -97,6 +102,7 @@ python main.py
 ```
 
 ### Parâmetros de Busca
+
 - **Tribunais**: Selecione tribunais específicos ou "TODOS"
 - **Período**: Defina data inicial e final
 - **Tipo de Busca**: Jurisprudência ou Artigo específico
@@ -124,16 +130,19 @@ LawX-Scraper/
 ## Funcionalidades Avançadas
 
 ### Análise com IA
+
 - **Categorização automática**: Classifica documentos jurídicos
 - **Sumarização**: Gera descrições concisas de jurisprudências
 - **Privacidade**: Remove nomes de pessoas (substitui por "polo ativo/passivo")
 
 ### Sistema de Cache
+
 - **Retomada de processos**: Continua de onde parou
 - **Evita duplicatas**: Verifica processos já extraídos
 - **Backup automático**: Salva progresso a cada intervalo
 
 ### Formatos de Saída
+
 - **CSV**: Dados tabulares completos
 - **Excel**: Planilhas formatadas
 - **JSON**: Dados estruturados para integração
@@ -141,6 +150,7 @@ LawX-Scraper/
 ## Exemplos de Uso
 
 ### Busca por Jurisprudência
+
 1. Abra a aplicação
 2. Selecione "Jurisprudência" no tipo de busca
 3. Escolha o tribunal ou "TODOS"
@@ -148,12 +158,14 @@ LawX-Scraper/
 5. Clique em "Iniciar Busca"
 
 ### Busca por Artigo Específico
+
 1. Selecione "Artigo" no tipo de busca
 2. Digite o número do artigo (ex: 121)
 3. Configure filtros adicionais
 4. Execute a busca
 
 ### Exportação de Dados
+
 - Arquivos são salvos em: `downloads/pasta_relatorios/`
 - Nomenclatura: `[TRIBUNAL]_[DATA]_[TIPO].csv`
 - Exemplo: `TODOS_2024-12-31_geral.csv`
@@ -168,11 +180,13 @@ LawX-Scraper/
 ## Solução de Problemas
 
 ### Erros Comuns
+
 1. **"API Key inválida"**: Configure a chave OpenAI em configs.json
 2. **"Tribunal não encontrado"**: Verifique a lista em tribunais.json
 3. **"Sem resultados"**: Ajuste o período ou filtros
 
 ### Logs e Debug
+
 - Verifique o console para mensagens de erro
 - Arquivos de log são criados automaticamente
 - Cache pode ser limpo via interface
@@ -192,16 +206,37 @@ Este projeto está sob a licença MIT. Veja o arquivo LICENSE para detalhes.
 ## Suporte
 
 Para dúvidas ou problemas:
+
 - Crie uma issue no GitHub
 - Consulte a documentação em `/docs`
 - Verifique os logs em `pasta_cache/`
 
 ---
 
+## Testes
+
+Para executar os testes e gerar um relatório HTML, utilize o seguinte comando:
+
+```bash
+uv run pytest --html=tests_report/report.html --self-contained-html
+```
+
+O relatório `report.html` será gerado na pasta `tests_report/`.
+
+Para visualizar o relatório, você pode iniciar um servidor HTTP simples na pasta `tests_report`:
+
+```bash
+cd tests_report
+python -m http.server 8000
+```
+
+Em seguida, abra seu navegador e acesse `http://localhost:8000/report.html`.
+
+---
+
 # Exibindo dados na tabela
+
 Atualmente conseguimos exibir os dados do scriping via relatório depois da pesquisa e pelo botão recuperar anterior que vai buscar destes relatórios e vai renderiza-los na tabela da aplicação.
 analises atuais ficam salvos como relatório mas ainda não exibidos depois do processo na tabela o que sera resolvido em breve.
 
 **Desenvolvido com ❤️ para a LawX e comunidade jurídica brasileira**
-
-

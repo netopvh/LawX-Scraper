@@ -1,9 +1,0 @@
-pinecone
-customtkinter
-requests
-pandas
-tensorflow
-sentence-transformers
-unidecode
-python-dotenv
-tf-keras

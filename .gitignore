@@ -1,127 +1,30 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# Virtual environments
-.env
-.venv
+*.pyc
+*.pyo
+*.pyd
+.Python/
 env/
 venv/
-ENV/
-env.bak/
-venv.bak/
-
-# IDEs
+.venv/
+*/bin/
+*/include/
+*/lib/
+*/lib64/
+*.egg-info/
+.tox/
+.coverage
+.mypy_cache/
+.pytest_cache/
 .vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Project specific
-configurações/cache.json
-configurações/cache copy.json
-configurações/last_update.txt
-configurações/resposta.json
-configurações/resposta.txt
-configurações/status.txt
-pasta_cache/
-pasta_buffer/
-pasta_backup/
-buffer_vetorizado/
-__pycache__/
-downloads/pasta_json/
-downloads/pasta_relatorios/
-ia_settings/ia_settings.json
 
 # Logs
-*.log
+logs/*
+!logs/.gitkeep # Para manter a pasta logs vazia no git
 
-# Temporary files
-*.tmp
-*.temp
-.tmp/
+# Output
+output/*
+!output/.gitkeep # Para manter a pasta output vazia no git
 
-# Node modules (if any)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-/configurações/cache.json
-/configurações/configs.json
-
-# Logs
-logs/
-
-/configurações/configs.json
-/configurações/cache.json
-
-logs
-dev-debug.log
-# Dependency directories
 # Environment variables
-# Editor directories and files
-.idea
-.vscode
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-# OS specific
-
-# Task files
-# tasks.json
-# tasks/ 
+.env
