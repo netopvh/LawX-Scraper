@@ -449,8 +449,22 @@ def extrair_ementa(texto):
         return match.group(1).strip()
     return ""
 
+def validate_assistant_id(client, assistant_id):
+    """Valida se o assistant_id existe na OpenAI."""
+    if not assistant_id:
+        return False
+    try:
+        client.beta.assistants.retrieve(assistant_id)
+        return True
+    except NotFound:
+        logging.warning(f"Assistant ID '{assistant_id}' não encontrado na OpenAI. Usando fallback para Chat Completions.")
+        return False
+    except Exception as e:
+        logging.error(f"Erro ao validar Assistant ID '{assistant_id}': {e}. Usando fallback para Chat Completions.")
+        return False
+
 def processar_com_ia(texto, categories_file_id, payload_uri):
-    """Processa o texto usando a API da OpenAI para categorizar."""
+    """Processa o texto usando a API da OpenAI para categorizar, com fallback para Chat Completions."""
     pasta_configs = os.path.join(os.path.dirname(__file__), 'prompts')
     prompt_categoria_path = os.path.join(pasta_configs, 'prompt_categoria.txt')
     
@@ -474,73 +488,30 @@ Este é o texto a ser analisado:
 {texto}
 ------------------------------------"""
         logging.info(f"Prompt final enviado para a IA: {prompt_final}")
-        logging.info(f"OPENAI_ASSISTANT_ID: {os.getenv("OPENAI_ASSISTANT_ID")}")
-
-        # Cria um thread e adiciona a mensagem
-        thread = client.beta.threads.create(
+        
+        # Usando sempre Chat Completions API
+        response = client.chat.completions.create(
+            model="gpt-4o-mini", # Ou outro modelo de sua preferência para completions
             messages=[
-                {
-                    "role": "user",
-                    "content": prompt_final,
-                }
-            ]
+                {"role": "user", "content": prompt_final}
+            ],
+            temperature=0.7,
         )
-
-        # Executa o assistente no thread
-        run = client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=os.getenv("OPENAI_ASSISTANT_ID"), # Certifique-se de que OPENAI_ASSISTANT_ID está no .env
-        )
-
-        # Espera a execução ser concluída
-        while run.status != "completed":
-            time.sleep(1) # Espera 1 segundo antes de verificar novamente
-            run = client.beta.threads.runs.retrieve(
-                thread_id=thread.id,
-                run_id=run.id
-            )
-
-        # Recupera as mensagens do thread
-        messages_page = client.beta.threads.messages.list(
-            thread_id=thread.id
-        )
-        messages_data = messages_page.data
-
-        value = None
-        if messages_data:
-            # A resposta mais recente do assistente deve ser a primeira mensagem na lista
-            assistant_message = next((m for m in messages_data if m.role == "assistant"), None)
-            if assistant_message and assistant_message.content:
-                for content_block in assistant_message.content:
-                    if content_block.type == "text":
-                        value = content_block.text.value
-                        break
+        value = response.choices[0].message.content
 
         if value:
             logging.info(f"Categoria identificada pela IA (valor bruto): {value}")
-            ia_categoria_id = "N/A"
-            ia_desc_categoria = "N/A"
-            try:
-                ai_response_json = json.loads(value)
-                ia_categoria_id = ai_response_json.get("categoria_id", "sem_categoria")
-                ia_desc_categoria = ai_response_json.get("desc_categoria", "Documento não classificado por categoria específica.")
+            ia_categoria_id = value.strip() # A IA deve retornar apenas o nome da categoria
+            ia_desc_categoria = valid_categories.get(ia_categoria_id, "Documento não classificado por categoria específica.")
 
-                # Validação da categoria retornada pela IA
-                if ia_categoria_id not in valid_categories:
-                    logging.warning(f"IA retornou categoria inválida: {ia_categoria_id}. Usando 'sem_categoria'.")
-                    ia_categoria_id = "sem_categoria"
-                    ia_desc_categoria = "Documento não classificado por categoria específica."
+            # Validação da categoria retornada pela IA
+            if ia_categoria_id not in valid_categories:
+                logging.warning(f"IA retornou categoria inválida: {ia_categoria_id}. Usando 'sem_categoria'.")
+                ia_categoria_id = "sem_categoria"
+                ia_desc_categoria = "Documento não classificado por categoria específica."
 
-                log_ai_interaction(texto, value, ia_categoria_id, ia_desc_categoria, payload_uri)
-                return {"categoria_id": ia_categoria_id, "desc_categoria": ia_desc_categoria, "categories_file_id": categories_file_id}
-            except json.JSONDecodeError as e:
-                logging.error(f"Erro ao decodificar JSON da resposta da IA: {e}. Resposta bruta: {value}")
-                log_ai_interaction(texto, value, "erro_json", "Erro ao decodificar JSON", payload_uri)
-                return None
-            except KeyError as e:
-                logging.error(f"Chave ausente na resposta JSON da IA: {e}. Resposta bruta: {value}")
-                log_ai_interaction(texto, value, "erro_json", f"Chave ausente: {e}", payload_uri)
-                return None
+            log_ai_interaction(texto, value, ia_categoria_id, ia_desc_categoria, payload_uri)
+            return {"categoria_id": ia_categoria_id, "desc_categoria": ia_desc_categoria, "categories_file_id": categories_file_id}
         else:
             logging.warning("A IA não retornou um valor de categoria válido.")
             log_ai_interaction(texto, "N/A", "sem_categoria", "IA não retornou valor válido", payload_uri)
@@ -568,43 +539,54 @@ Este é o texto a ser analisado:
 ------------------------------------"""
         logging.info(f"Prompt final enviado para a IA para descrição: {prompt_final}")
 
-        assistant_id = 'asst_7HnwPIVsEXEtiFNU68ri2TRs' # ID do assistente, pode ser configurável
+        assistant_id = os.getenv("OPENAI_ASSISTANT_ID")
+        if validate_assistant_id(client, assistant_id):
+            logging.info(f"Usando Assistants API para descrição com ID: {assistant_id}")
+            thread = client.beta.threads.create()
+            thread_id = thread.id
+            logging.info(f"Thread criada com ID: {thread_id}")
 
-        thread = client.beta.threads.create()
-        thread_id = thread.id
-        logging.info(f"Thread criada com ID: {thread_id}")
+            client.beta.threads.messages.create(
+                thread_id=thread_id, role="user", content=prompt_final
+            )
+            logging.info("Mensagem adicionada ao thread.")
 
-        client.beta.threads.messages.create(
-            thread_id=thread_id, role="user", content=prompt_final
-        )
-        logging.info("Mensagem adicionada ao thread.")
+            run = client.beta.threads.runs.create(
+                thread_id=thread_id, assistant_id=assistant_id
+            )
+            run_id = run.id
+            logging.info(f"Run criado com ID: {run_id}")
 
-        run = client.beta.threads.runs.create(
-            thread_id=thread_id, assistant_id=assistant_id
-        )
-        run_id = run.id
-        logging.info(f"Run criado com ID: {run_id}")
+            while run.status in ['queued', 'in_progress', 'cancelling']:
+                time.sleep(1)
+                run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
 
-        while run.status in ['queued', 'in_progress', 'cancelling']:
-            time.sleep(1)
-            run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
-
-        if run.status == 'completed':
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            resposta_ia = ""
-            for msg in messages.data:
-                if msg.role == "assistant":
-                    for content in msg.content:
-                        if content.type == 'text':
-                            resposta_ia = content.text.value
+            if run.status == 'completed':
+                messages = client.beta.threads.messages.list(thread_id=thread_id)
+                resposta_ia = ""
+                for msg in messages.data:
+                    if msg.role == "assistant":
+                        for content in msg.content:
+                            if content.type == 'text':
+                                resposta_ia = content.text.value
+                                break
+                        if resposta_ia:
                             break
-                    if resposta_ia:
-                        break
-            logging.info(f"Resposta da IA para descrição: {resposta_ia}")
-            return resposta_ia
+                logging.info(f"Resposta da IA para descrição: {resposta_ia}")
+                return resposta_ia
+            else:
+                logging.error(f"Run para descrição falhou com status: {run.status}")
+                return ""
         else:
-            logging.error(f"Run para descrição falhou com status: {run.status}")
-            return ""
+            logging.warning("OPENAI_ASSISTANT_ID inválido ou não configurado para descrição. Usando Chat Completions API.")
+            response = client.chat.completions.create(
+                model="gpt-4o-mini", # Ou outro modelo de sua preferência para completions
+                messages=[
+                    {"role": "user", "content": prompt_final}
+                ],
+                temperature=0.7,
+            )
+            return response.choices[0].message.content
 
     except FileNotFoundError:
         logging.error(f"Arquivo de prompt de descrição não encontrado: {prompt_descricao_path}")
