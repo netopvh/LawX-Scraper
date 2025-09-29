@@ -333,14 +333,14 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 embeddings = model.encode(texto_para_categorizar).tolist()
                                 additional_metadata_template = load_additional_metadata(r"d:\Workspace\LawX-Scraper\docs\metadata.json")
                                 
-                                # Filter item metadata based on additional_metadata_template keys
-                                filtered_item_metadata = {k: (str(v) if v is not None else "") for k, v in item.items() if k in additional_metadata_template}
-                                
-                                # Start with filtered item metadata
-                                cleaned_metadata = filtered_item_metadata
-                                
-                                # Update with additional_metadata_template, giving precedence to its values
-                                cleaned_metadata.update(additional_metadata_template)
+                                cleaned_metadata = {}
+                                for key in additional_metadata_template.keys():
+                                    if key in item:
+                                        # Usa o valor do item, garantindo que seja string
+                                        cleaned_metadata[key] = str(item[key]) if item[key] is not None else ""
+                                    else:
+                                        # Usa o valor do template (que é uma string vazia)
+                                        cleaned_metadata[key] = additional_metadata_template[key]
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
