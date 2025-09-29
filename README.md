@@ -53,19 +53,7 @@ uv run app_code_120.py #inicialização direta (inica o projeto sem intermediari
 
 # Executar a aplicação (usando Python)
 
-python main.py (simplificado)
-python app_code_120.py (classe principal)
-
-### Outros meios (não revisados)
-
-```bash
-
-# instalador automatizado (não revisado)
-./instalador.bat  # Windows
-
-# Rodar a aplicação no Windows via batch (não revisado)
-app_scrapping.bat
-```
+python scrap.py --data-inicio "28/09/2025" --data-fim "28/09/2025" --jurisprudencia "Ementa, Acórdão" --tribunal "TODOS" --test (para rodar teste de 3 escritas)
 
 ## Configuração
 
@@ -77,29 +65,11 @@ app_scrapping.bat
    - Período de busca
 2. **Arquivos de configuração**:
 
-   - `configurações/configs.json`: Configurações principais
-   - `configurações/tribunais.json`: Lista de tribunais disponíveis
-   - `configurações/docs.json`: Tipos de documentos aceitos
+   - `config/tribunais.json`: Lista de tribunais disponíveis
+   - `config/docs.json`: Tipos de documentos aceitos
 
 ## Uso
 
-### Interface Gráfica
-
-Execute o aplicando principal:
-
-```bash
-python app_code_120.py
-```
-
-### Interface de Linha de Comando
-
-```bash
-# Executar scraping direto
-python main.py
-
-# Usar script batch
-./app_scrapping.bat
-```
 
 ### Parâmetros de Busca
 

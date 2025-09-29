@@ -41,6 +41,15 @@ def sanitize_string_for_pinecone(text):
     text = ''.join(c for c in text if c.isalnum() or c == '_')
     return text
 
+def normalize_key_to_snake_case(key):
+    """
+    Converte uma string de camelCase ou sem underscores para snake_case.
+    Ex: "destinatarioAdvogados" -> "destinatario_advogados"
+    Ex: "codigoClasse" -> "codigo_classe"
+    """
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', key)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
 def load_additional_metadata(file_path):
     """Carrega metadados adicionais de um arquivo JSON."""
     if os.path.exists(file_path):
@@ -331,9 +340,24 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 logging.info(f"Namespace para upsert no Pinecone: '{namespace}' (categoria_id: {item.get('categoria_id')})")
                                 # TODO: Substituir 'dummy_vector' por embeddings reais gerados pelo modelo SentenceTransformer.
                                 embeddings = model.encode(texto_para_categorizar).tolist()
-                                cleaned_metadata = {k: (str(v) if v is not None else "") for k, v in item.items()}
-                                additional_metadata = load_additional_metadata(r"d:\Workspace\LawX-Scraper\simplified_code\docs\metadata.json")
-                                cleaned_metadata.update(additional_metadata)
+                                additional_metadata_template = load_additional_metadata(r"d:\Workspace\LawX-Scraper\docs\metadata.json")
+                                
+                                cleaned_metadata = {}
+                                normalized_item = {normalize_key_to_snake_case(k): v for k, v in item.items()}
+                                for template_key in additional_metadata_template.keys():
+                                    value_to_assign = ""
+                                    # 1. Verifica correspondência exata após normalização (camelCase para snake_case)
+                                    if template_key in normalized_item:
+                                        value_to_assign = str(normalized_item[template_key]) if normalized_item[template_key] is not None else ""
+                                    else:
+                                        # 2. Verifica variações sem underscore nas chaves originais do item
+                                        template_key_no_underscore = template_key.replace('_', '')
+                                        for original_item_key, original_item_value in item.items():
+                                            if original_item_key.lower() == template_key_no_underscore.lower():
+                                                value_to_assign = str(original_item_value) if original_item_value is not None else ""
+                                                break
+                                    
+                                    cleaned_metadata[template_key] = value_to_assign
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
@@ -447,11 +471,36 @@ def load_categorias():
         sys.exit(1)
 
 def extrair_ementa(texto):
-    """Extrai a seção 'EMENTA' de um texto, se presente."""
-    match = re.search(r'EMENTA:\s*(.*?)(?:\n\n|\Z)', texto, re.DOTALL)
+    """Extrai a ementa de um texto, se presente."""
+    # Padrão para encontrar a ementa (exemplo: EMENTA: ...)
+    match = re.search(r'EMENTA:\s*(.*?)(?=\n\n|\Z)', texto, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
     return ""
+
+def fetch_content_from_url(url):
+    """Faz uma requisição HTTP para a URL e extrai o conteúdo de texto."""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Levanta um erro para códigos de status HTTP ruins (4xx ou 5xx)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # Remove scripts e estilos para obter apenas o texto visível
+        for script in soup(["script", "style"]):
+            script.extract()
+        text = soup.get_text()
+        # Quebra linhas e remove espaços em branco extras
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for phrase in ' '.join(lines).split("  "))
+        text = '\n'.join(chunk for chunk in chunks if chunk)
+        return text
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Erro ao acessar a URL {url}: {e}")
+        return "Não foi possível extrair conteúdo do documento"
+    except Exception as e:
+        logging.error(f"Erro inesperado ao extrair conteúdo da URL {url}: {e}")
+        return "Não foi possível extrair conteúdo do documento"
+
+
 
 def validate_assistant_id(client, assistant_id):
     """Valida se o assistant_id existe na OpenAI."""

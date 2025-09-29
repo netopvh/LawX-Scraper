@@ -1,3 +1,26 @@
 {
-    "Tribunais": "TJSP"
+  "id": null,
+  "data_disponibilizacao": "",
+  "sigla_tribunal": "",
+  "tipo_comunicacao": "",
+  "nome_orgao": "",
+  "id_orgao": null,
+  "texto": "",
+  "numero_processo": "",
+  "meio": "",
+  "link": "",
+  "tipo_documento": "",
+  "nome_classe": "",
+  "codigo_classe": "",
+  "numero_comunicacao": null,
+  "ativo": null,
+  "hash": "",
+  "status": "",
+  "motivo_cancelamento": null,
+  "data_cancelamento": null,
+
+  "meio_completo": "",
+  "numero_processo_com_mascara": "",
+  "destinatarios": [],
+  "destinatario_advogados": []
 }
