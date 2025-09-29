@@ -1,3 +1,27 @@
 {
-    "Tribunais": "TJSP"
+  "ativo": "",
+  "categoria_id": "",
+  "codigo_classe": "",
+  "data_cancelamento": "",
+  "data_disponibilizacao": "",
+  "desc_categoria": "",
+  "descricao_ia": "",
+  "destinatario_advogados": "",
+  "destinatarios": "",
+  "hash": "",
+  "id": "",
+  "id_orgao": "",
+  "link": "",
+  "meio": "",
+  "meio_completo": "",
+  "motivo_cancelamento": "",
+  "nome_classe": "",
+  "nome_orgao": "",
+  "numero_comunicacao": "",
+  "numero_processo": "",
+  "sigla_tribunal": "",
+  "status": "",
+  "texto": "",
+  "tipo_comunicacao": "",
+  "tipo_documento": ""
 }

@@ -331,9 +331,16 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 logging.info(f"Namespace para upsert no Pinecone: '{namespace}' (categoria_id: {item.get('categoria_id')})")
                                 # TODO: Substituir 'dummy_vector' por embeddings reais gerados pelo modelo SentenceTransformer.
                                 embeddings = model.encode(texto_para_categorizar).tolist()
-                                cleaned_metadata = {k: (str(v) if v is not None else "") for k, v in item.items()}
-                                additional_metadata = load_additional_metadata(r"d:\Workspace\LawX-Scraper\simplified_code\docs\metadata.json")
-                                cleaned_metadata.update(additional_metadata)
+                                additional_metadata_template = load_additional_metadata(r"d:\Workspace\LawX-Scraper\docs\metadata.json")
+                                
+                                # Filter item metadata based on additional_metadata_template keys
+                                filtered_item_metadata = {k: (str(v) if v is not None else "") for k, v in item.items() if k in additional_metadata_template}
+                                
+                                # Start with filtered item metadata
+                                cleaned_metadata = filtered_item_metadata
+                                
+                                # Update with additional_metadata_template, giving precedence to its values
+                                cleaned_metadata.update(additional_metadata_template)
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
