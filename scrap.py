@@ -41,6 +41,15 @@ def sanitize_string_for_pinecone(text):
     text = ''.join(c for c in text if c.isalnum() or c == '_')
     return text
 
+def normalize_key_to_snake_case(key):
+    """
+    Converte uma string de camelCase ou sem underscores para snake_case.
+    Ex: "destinatarioAdvogados" -> "destinatario_advogados"
+    Ex: "codigoClasse" -> "codigo_classe"
+    """
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', key)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
 def load_additional_metadata(file_path):
     """Carrega metadados adicionais de um arquivo JSON."""
     if os.path.exists(file_path):
@@ -334,11 +343,13 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 additional_metadata_template = load_additional_metadata(r"d:\Workspace\LawX-Scraper\docs\metadata.json")
                                 
                                 cleaned_metadata = {}
+                                normalized_item = {normalize_key_to_snake_case(k): v for k, v in item.items()}
                                 for key in additional_metadata_template.keys():
-                                    if key in item:
-                                        # Usa o valor do item, garantindo que seja string
-                                        cleaned_metadata[key] = str(item[key]) if item[key] is not None else ""
+                                    if key in normalized_item:
+                                        # Usa o valor do item normalizado, garantindo que seja string
+                                        cleaned_metadata[key] = str(normalized_item[key]) if normalized_item[key] is not None else ""
                                     else:
+                                        cleaned_metadata[key] = "" # Garante que todas as chaves do template estejam presentes
                                         # Usa o valor do template (que é uma string vazia)
                                         cleaned_metadata[key] = additional_metadata_template[key]
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
