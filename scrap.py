@@ -447,11 +447,36 @@ def load_categorias():
         sys.exit(1)
 
 def extrair_ementa(texto):
-    """Extrai a seção 'EMENTA' de um texto, se presente."""
-    match = re.search(r'EMENTA:\s*(.*?)(?:\n\n|\Z)', texto, re.DOTALL)
+    """Extrai a ementa de um texto, se presente."""
+    # Padrão para encontrar a ementa (exemplo: EMENTA: ...)
+    match = re.search(r'EMENTA:\s*(.*?)(?=\n\n|\Z)', texto, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
     return ""
+
+def fetch_content_from_url(url):
+    """Faz uma requisição HTTP para a URL e extrai o conteúdo de texto."""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Levanta um erro para códigos de status HTTP ruins (4xx ou 5xx)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # Remove scripts e estilos para obter apenas o texto visível
+        for script in soup(["script", "style"]):
+            script.extract()
+        text = soup.get_text()
+        # Quebra linhas e remove espaços em branco extras
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for phrase in ' '.join(lines).split("  "))
+        text = '\n'.join(chunk for chunk in chunks if chunk)
+        return text
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Erro ao acessar a URL {url}: {e}")
+        return "Não foi possível extrair conteúdo do documento"
+    except Exception as e:
+        logging.error(f"Erro inesperado ao extrair conteúdo da URL {url}: {e}")
+        return "Não foi possível extrair conteúdo do documento"
+
+
 
 def validate_assistant_id(client, assistant_id):
     """Valida se o assistant_id existe na OpenAI."""
