@@ -344,14 +344,20 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 
                                 cleaned_metadata = {}
                                 normalized_item = {normalize_key_to_snake_case(k): v for k, v in item.items()}
-                                for key in additional_metadata_template.keys():
-                                    if key in normalized_item:
-                                        # Usa o valor do item normalizado, garantindo que seja string
-                                        cleaned_metadata[key] = str(normalized_item[key]) if normalized_item[key] is not None else ""
+                                for template_key in additional_metadata_template.keys():
+                                    value_to_assign = ""
+                                    # 1. Verifica correspondência exata após normalização (camelCase para snake_case)
+                                    if template_key in normalized_item:
+                                        value_to_assign = str(normalized_item[template_key]) if normalized_item[template_key] is not None else ""
                                     else:
-                                        cleaned_metadata[key] = "" # Garante que todas as chaves do template estejam presentes
-                                        # Usa o valor do template (que é uma string vazia)
-                                        cleaned_metadata[key] = additional_metadata_template[key]
+                                        # 2. Verifica variações sem underscore nas chaves originais do item
+                                        template_key_no_underscore = template_key.replace('_', '')
+                                        for original_item_key, original_item_value in item.items():
+                                            if original_item_key.lower() == template_key_no_underscore.lower():
+                                                value_to_assign = str(original_item_value) if original_item_value is not None else ""
+                                                break
+                                    
+                                    cleaned_metadata[template_key] = value_to_assign
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
