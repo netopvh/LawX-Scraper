@@ -757,7 +757,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Script de scraping de jurisprudência.")
     parser.add_argument("--data-inicio", help="Data de início no formato DD/MM/AAAA", required=True)
     parser.add_argument("--data-fim", default=None, help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.")
-    parser.add_argument("--jurisprudencia", type=str, help="Termo de jurisprudência a ser procurado (opcional).", default=None)
     parser.add_argument('--tipo-doc', type=str, help='Tipo de documento a ser pesquisado (ex: Edital, Acórdão).', default=None)
     parser.add_argument("--tribunal", type=str, default='TODOS', help='Sigla do tribunal para filtrar (ex: TJSP, TRF3). Use "TODOS" para pesquisar em todos os tribunais configurados.')
     parser.add_argument("--only-csv", action='store_true', help='Se presente, os dados serão salvos apenas em CSV, sem interação com o Pinecone.')
@@ -769,7 +768,7 @@ if __name__ == "__main__":
     CATEGORIES_FILE_PATH = os.getenv('CATEGORIES_CSV_PATH', r"./docs/categorias.csv")
     categorias_disponiveis = load_valid_categories(CATEGORIES_FILE_PATH)
 
-    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunal, categorias_disponiveis, args.only_csv, categories_file_id, args.test, args.tipo_doc)
+    request_singular(args.data_inicio, args.data_fim, args.tipo_doc, args.tribunal, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
 
 
 def fetch_content_from_url(url):
