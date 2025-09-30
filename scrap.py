@@ -57,6 +57,28 @@ def load_additional_metadata(file_path):
             return json.load(f)
     return {}
 
+def load_docs_config(file_path):
+    """Carrega a lista de documentos padrão de um arquivo JSON."""
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('lista_docs', [])
+        except Exception as e:
+            logging.error(f"Erro ao carregar lista de documentos do arquivo {file_path}: {e}")
+    return []
+
+def load_fields_to_check(file_path):
+    """Carrega a lista de campos a serem verificados de um arquivo JSON."""
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('lista_campos', [])
+        except Exception as e:
+            logging.error(f"Erro ao carregar lista de campos do arquivo {file_path}: {e}")
+    return []
+
 def upload_categories_file(file_path):
     """Faz o upload do arquivo de categorias para a OpenAI e retorna o file_id."""
     try:
@@ -209,9 +231,60 @@ def get_dates_between(start_date, end_date):
     delta = end_dt - start_dt
     return [(start_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
 
-def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv, categories_file_id, test=False):
+def normalize_text(text):
+    """
+    Normaliza o texto removendo acentuações e convertendo para minúsculas.
+    """
+    if not isinstance(text, str):
+        return text
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+    return text.lower()
+
+def pluralize_with_ia(terms):
+    """
+    Placeholder para pluralizar termos usando IA. Por enquanto, retorna os termos originais.
+    """
+    logging.info(f"Pluralizando termos (placeholder): {terms}")
+    return terms
+
+def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv, categories_file_id, test=False, tipo_doc_procurado=None):
+    logging.info(f"Valor de tipo_doc_procurado no início de request_singular: {tipo_doc_procurado}")
     processed_items_count = 0
-    # TODO: Implementar leitura de configs.json
+
+    FIELDS_TO_CHECK_PATH = os.getenv('FIELDS_TO_CHECK_PATH', r".\config\valida-campos-api.json")
+    api_fields_to_check = load_fields_to_check(FIELDS_TO_CHECK_PATH)
+    if not api_fields_to_check:
+        logging.warning(f"Nenhum campo para verificar encontrado em {FIELDS_TO_CHECK_PATH}. A filtragem por tipo_doc pode não funcionar corretamente.")
+
+    # Carrega documentos padrão se tipo_doc_procurado não for fornecido ou estiver vazio
+    if not tipo_doc_procurado:
+        DOCS_SOURCE = os.getenv('DOCS_SOURCE', r".\config\docs.json")
+        default_docs = load_docs_config(DOCS_SOURCE)
+        if default_docs:
+            tipo_doc_procurado = ",".join(default_docs)
+            logging.info(f"Usando documentos padrão para tipo_doc: {tipo_doc_procurado}")
+        else:
+            logging.warning(f"Nenhum documento padrão encontrado em {DOCS_SOURCE}. A filtragem por tipo_doc pode não funcionar corretamente.")
+
+    logging.info(f"Valor final de tipo_doc_procurado antes da normalização: {tipo_doc_procurado}")
+
+    search_terms_normalized = []
+    if tipo_doc_procurado:
+        # Divide os termos
+        original_terms = [term.strip() for term in tipo_doc_procurado.split(',') if term.strip()]
+        
+        # Normaliza os termos originais
+        normalized_original_terms = [normalize_text(term) for term in original_terms]
+        
+        # Pluraliza os termos originais usando IA
+        pluralized_terms = pluralize_with_ia(original_terms)
+        
+        # Normaliza os termos pluralizados
+        normalized_pluralized_terms = [normalize_text(term) for term in pluralized_terms]
+        
+        # Combina e remove duplicatas para a lista final de busca
+        search_terms_normalized = list(set(normalized_original_terms + normalized_pluralized_terms))
+        logging.info(f"Termos de busca normalizados para tipo_doc (singular e plural): {search_terms_normalized}")
 
     # Configuração do Pinecone
     if not only_csv:
@@ -220,6 +293,9 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
             return
 
         index = pc.Index(pinecone_index_name)
+
+        if data_fim is None:
+            data_fim = data_inicio
 
         lista_datas = get_dates_between(data_inicio, data_fim)
 
@@ -277,6 +353,33 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                         # Processar resultados e enviar para o Pinecone
 
                         for item in resultado_atual['items']:
+                            if search_terms_normalized:
+                                item_match = False
+                                logging.info(f"Termos de busca normalizados: {search_terms_normalized}")
+                                for search_term in search_terms_normalized:
+                                    # Campos a serem verificados
+                                    fields_to_check = []
+                                    for field_name in api_fields_to_check:
+                                        fields_to_check.append(item.get(field_name, ''))
+
+                                    logging.info(f"Campos verificados para o item {item.get('id')}: {fields_to_check}")
+                                    
+                                    for field_value in fields_to_check:
+                                        # Split the normalized field value into words and check for exact match
+                                        normalized_field_words = normalize_text(field_value).split()
+                                        logging.info(f"Termos normalizados do campo: {normalized_field_words}")
+                                        if search_term in normalized_field_words:
+                                            item_match = True
+                                            # Log detalhado: onde o termo foi encontrado
+                                            field_name_index = fields_to_check.index(field_value)
+                                            actual_field_name = api_fields_to_check[field_name_index]
+                                            logging.info(f"Termo de busca '{search_term}' encontrado no campo '{actual_field_name}' no trecho: '{field_value}'.")
+                                            break
+                                    if item_match:
+                                        break
+                                if not item_match:
+                                    logging.info(f"Item {item.get('id')} ignorado por não corresponder a '--tipo-doc'.")
+                                    continue # Pula para o próximo item se não houver correspondência
                             if test and processed_items_count >= 3:
                                 logging.info("Limite de 3 itens atingido no modo de teste. Parando o processamento.")
                                 break
@@ -332,8 +435,8 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                     logging.error("Erro: Variável de ambiente OPENAI_API_KEY não configurada. Categorização e descrição IA serão ignoradas.")
                                 
 
-                            
                             # Lógica de upsert no Pinecone após categorização (condicional a not only_csv)
+                            logging.debug("Verificando preservação de acentuação para Pinecone: os dados originais do item são usados.")
                             if not only_csv:
                                 namespace_raw = item.get('categoria_id', 'geral')
                                 namespace = sanitize_string_for_pinecone(namespace_raw)
@@ -364,6 +467,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             processed_items_count += 1 # Increment count once per item
 
                             # Manter geração de CSV e logs
+                            logging.debug("Verificando preservação de acentuação para CSV: os dados originais do item são usados.")
                             output_base_dir = os.path.join(os.path.dirname(__file__), 'output')
                             categoria_dir = os.path.join(output_base_dir, item.get('categoria_id', 'geral').replace(' ', '_').replace('/', '_').lower())
                             os.makedirs(categoria_dir, exist_ok=True)
@@ -653,26 +757,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Script de scraping de jurisprudência.")
     parser.add_argument("--data-inicio", help="Data de início no formato DD/MM/AAAA", required=True)
     parser.add_argument("--data-fim", default=None, help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.")
-    parser.add_argument("--jurisprudencia", default="", help="Termo de jurisprudência a ser procurado (opcional). Use --jurisprudencia \"Ementa\" para uma tag, ou --jurisprudencia \"Ementa, Acórdão\" para múltiplas tags. Documentos possíveis em ./config/docs.json")
-    parser.add_argument("--tribunal", default="Todos", help="Tribunais a serem pesquisados, separados por vírgula. Ex: 'TJSP,TJMG' ou 'Todos'")
-    parser.add_argument("--only-csv", action="store_true", help="Se presente, o script gerará apenas CSVs e não usará o Pinecone.")
-    parser.add_argument("--test", action="store_true", help="Se presente, o script limitará o scraping a 10 escritas para testes.")
+    parser.add_argument('--tipo-doc', type=str, help='Tipo de documento a ser pesquisado (ex: Edital, Acórdão).', default=None)
+    parser.add_argument("--tribunal", type=str, default='TODOS', help='Sigla do tribunal para filtrar (ex: TJSP, TRF3). Use "TODOS" para pesquisar em todos os tribunais configurados.')
+    parser.add_argument("--only-csv", action='store_true', help='Se presente, os dados serão salvos apenas em CSV, sem interação com o Pinecone.')
+    parser.add_argument("--test", action='store_true', help='Executa o scraper em modo de teste, processando apenas 3 itens.')
 
     args = parser.parse_args()
 
-    # Adiciona a lógica para exibir ajuda e sair se --help ou -h for fornecido
-    if any(arg in sys.argv for arg in ['--help', '-h']):
-        parser.print_help()
-        sys.exit(0)
+    # Carrega as categorias válidas do arquivo CSV
+    CATEGORIES_FILE_PATH = os.getenv('CATEGORIES_CSV_PATH', r"./docs/categorias.csv")
+    categorias_disponiveis = load_valid_categories(CATEGORIES_FILE_PATH)
 
-    if args.data_fim is None:
-        args.data_fim = args.data_inicio
-
-    tribunais_disponiveis = load_tribunais()
-
-    categorias_disponiveis = load_categorias()
-
-    request_singular(args.data_inicio, args.data_fim, args.jurisprudencia, args.tribunal, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
+    request_singular(args.data_inicio, args.data_fim, args.tipo_doc, args.tribunal, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
 
 
 def fetch_content_from_url(url):
@@ -702,3 +798,41 @@ def fetch_content_from_url(url):
         return None
     except Exception as e:
         logging.error(f"Erro inesperado ao processar URL {url}: {e}")
+
+
+def load_prompt(file_path):
+    """
+    Carrega o conteúdo de um arquivo de prompt.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        logging.error(f"Arquivo de prompt não encontrado: {file_path}")
+        return None
+
+def pluralize_with_ia(words_list):
+    """
+    Pluraliza uma lista de palavras usando a OpenAI API.
+    """
+    prompt_template = load_prompt(r"d:\Workspace\LawX-Scraper\prompts\prompt_plural.txt")
+    if not prompt_template:
+        return words_list
+
+    words_str = ', '.join(words_list)
+    prompt = prompt_template.format(words=words_str)
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",  # Ou outro modelo adequado
+            messages=[
+                {"role": "system", "content": "Você é um assistente útil que pluraliza palavras."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0
+        )
+        pluralized_words_str = response.choices[0].message.content.strip()
+        return [word.strip() for word in pluralized_words_str.split(',')]
+    except Exception as e:
+        logging.error(f"Erro ao pluralizar palavras com IA: {e}")
+        return words_list
