@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python/
+env/
+venv/
+.venv/
+*/bin/
+*/include/
+*/lib/
+*/lib64/
+*.egg-info/
+.tox/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.vscode/
+
+# Logs
+logs/*
+!logs/.gitkeep # Para manter a pasta logs vazia no git
+
+# Output
+output/*
+!output/.gitkeep # Para manter a pasta output vazia no git
+
+# Environment variables
+.env

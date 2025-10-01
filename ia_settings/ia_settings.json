@@ -1,7 +1,0 @@
-{
-    "batchsize_backupcsv_geral_normalizado": 1000,
-    "batchsize_backupcsv_filtrado_normalizado": 1000,
-    "batchsize_backupcsv_filtrado_vetorizado": 100,
-    "batchsize_deploy_vetor": 10,
-    "batchsize_cache_processos":1000
-}
