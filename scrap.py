@@ -473,7 +473,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 logging.info(f"Namespace para upsert no Pinecone: '{namespace}' (categoria_id: {item.get('categoria_id')})")
                                 # TODO: Substituir 'dummy_vector' por embeddings reais gerados pelo modelo SentenceTransformer.
                                 embeddings = model.encode(texto_para_categorizar).tolist()
-                                additional_metadata_template = load_additional_metadata(r"d:\Workspace\LawX-Scraper\docs\metadata.json")
+                                additional_metadata_template = load_additional_metadata(os.getenv('METADATA_JSON_PATH', './docs/metadata.json'))
                                 
                                 cleaned_metadata = {}
                                 normalized_item = {normalize_key_to_snake_case(k): v for k, v in item.items()}
@@ -563,7 +563,7 @@ def load_tribunais(tribunal_a_validar=None):
     Se tribunal_a_validar for None, retorna todos os tribunais (incluindo 'TODOS').
     Se tribunal_a_validar for fornecido, verifica se o tribunal existe na lista.
     """
-    tribunais_file = os.path.join(os.path.dirname(__file__), 'config', 'tribunais.json')
+    tribunais_file = os.getenv('TRIBUNAIS_SOURCE', './config/tribunais.json')
     try:
         with open(tribunais_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -591,7 +591,7 @@ def load_tribunais(tribunal_a_validar=None):
 
 def load_categorias():
     """Carrega a lista de categorias do arquivo CSV."""
-    categorias_path = os.path.join(os.path.dirname(__file__), 'docs', 'categorias.csv')
+    categorias_path = os.getenv('CATEGORIES_CSV_PATH', './docs/categorias.csv')
     try:
         df_categorias = pd.read_csv(categorias_path, delimiter=';')
         # Converte o DataFrame para uma lista de dicionários
@@ -656,7 +656,7 @@ def processar_com_ia(texto, categories_file_id, payload_uri):
     prompt_categoria_path = os.path.join(pasta_configs, 'prompt_categoria.txt')
     
     # Carregar categorias válidas do CSV
-    categorias_csv_path = os.path.join(os.path.dirname(__file__), 'docs', 'categorias.csv')
+    categorias_csv_path = os.getenv('CATEGORIES_CSV_PATH', './docs/categorias.csv')
     valid_categories = load_valid_categories(categorias_csv_path)
 
     try:
