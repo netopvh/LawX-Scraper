@@ -240,12 +240,42 @@ def normalize_text(text):
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
     return text.lower()
 
-def pluralize_with_ia(terms):
+def load_prompt(file_path):
     """
-    Placeholder para pluralizar termos usando IA. Por enquanto, retorna os termos originais.
+    Carrega o conteúdo de um arquivo de prompt.
     """
-    logging.info(f"Pluralizando termos (placeholder): {terms}")
-    return terms
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        logging.error(f"Arquivo de prompt não encontrado: {file_path}")
+        return None
+
+def pluralize_with_ia(words_list):
+    """
+    Pluraliza uma lista de palavras usando a OpenAI API.
+    """
+    prompt_template = load_prompt(r"d:\Workspace\LawX-Scraper\prompts\prompt_plural.txt")
+    if not prompt_template:
+        return words_list
+
+    words_str = ', '.join(words_list)
+    prompt = prompt_template.format(words=words_str)
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",  # Ou outro modelo adequado
+            messages=[
+                {"role": "system", "content": "Você é um assistente útil que pluraliza palavras."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0
+        )
+        pluralized_words_str = response.choices[0].message.content.strip()
+        return [word.strip() for word in pluralized_words_str.split(',')]
+    except Exception as e:
+        logging.error(f"Erro ao pluralizar palavras com IA: {e}")
+        return words_list
 
 def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv, categories_file_id, test=False, tipo_doc_procurado=None):
     logging.info(f"Valor de tipo_doc_procurado no início de request_singular: {tipo_doc_procurado}")
@@ -798,41 +828,3 @@ def fetch_content_from_url(url):
         return None
     except Exception as e:
         logging.error(f"Erro inesperado ao processar URL {url}: {e}")
-
-
-def load_prompt(file_path):
-    """
-    Carrega o conteúdo de um arquivo de prompt.
-    """
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        logging.error(f"Arquivo de prompt não encontrado: {file_path}")
-        return None
-
-def pluralize_with_ia(words_list):
-    """
-    Pluraliza uma lista de palavras usando a OpenAI API.
-    """
-    prompt_template = load_prompt(r"d:\Workspace\LawX-Scraper\prompts\prompt_plural.txt")
-    if not prompt_template:
-        return words_list
-
-    words_str = ', '.join(words_list)
-    prompt = prompt_template.format(words=words_str)
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Ou outro modelo adequado
-            messages=[
-                {"role": "system", "content": "Você é um assistente útil que pluraliza palavras."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0
-        )
-        pluralized_words_str = response.choices[0].message.content.strip()
-        return [word.strip() for word in pluralized_words_str.split(',')]
-    except Exception as e:
-        logging.error(f"Erro ao pluralizar palavras com IA: {e}")
-        return words_list
