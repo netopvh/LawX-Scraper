@@ -240,6 +240,63 @@ def normalize_text(text):
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
     return text.lower()
 
+def truncate_metadata(metadata, max_bytes=40960, critical_field='texto'):
+    """
+    Trunca os valores dos metadados para garantir que o tamanho total não exceda max_bytes.
+    Prioriza o truncamento de campos não-críticos antes do campo crítico.
+    """
+    if not isinstance(metadata, dict):
+        logging.warning("Metadados não são um dicionário. Não será possível truncar.")
+        return metadata
+
+    # Calcula o tamanho inicial dos metadados
+    current_size = len(json.dumps(metadata).encode('utf-8'))
+
+    if current_size <= max_bytes:
+        return metadata
+
+    logging.warning(f"Tamanho inicial dos metadados ({current_size} bytes) excede o limite de {max_bytes} bytes. Iniciando truncamento.")
+
+    # Separa campos críticos e não-críticos
+    non_critical_fields = [k for k in metadata if k != critical_field and isinstance(metadata[k], str)]
+    critical_field_value = metadata.get(critical_field)
+    
+    # 1. Truncar campos não-críticos primeiro
+    for field in non_critical_fields:
+        if current_size <= max_bytes:
+            break
+        original_value = metadata[field]
+        if isinstance(original_value, str):
+            # Reduz o campo em 10% a cada iteração até caber ou ser muito pequeno
+            while len(json.dumps(metadata).encode('utf-8')) > max_bytes and len(metadata[field]) > 50:
+                truncated_len = int(len(metadata[field]) * 0.9)
+                metadata[field] = original_value[:truncated_len] + "..."
+                current_size = len(json.dumps(metadata).encode('utf-8'))
+            if len(json.dumps(metadata).encode('utf-8')) > max_bytes: # Se ainda for muito grande, trunca agressivamente
+                metadata[field] = original_value[:50] + "..."
+                current_size = len(json.dumps(metadata).encode('utf-8'))
+            logging.warning(f"Campo '{field}' truncado. Novo tamanho: {len(metadata[field])} caracteres.")
+
+    # 2. Se ainda exceder, truncar o campo crítico (texto)
+    if current_size > max_bytes and isinstance(critical_field_value, str):
+        logging.warning(f"Após truncar campos não-críticos, metadados ainda excedem o limite ({current_size} bytes). Truncando campo crítico '{critical_field}'.")
+        original_text_value = critical_field_value
+        while len(json.dumps(metadata).encode('utf-8')) > max_bytes and len(metadata[critical_field]) > 50:
+            truncated_len = int(len(metadata[critical_field]) * 0.9)
+            metadata[critical_field] = original_text_value[:truncated_len] + "..."
+            current_size = len(json.dumps(metadata).encode('utf-8'))
+        if len(json.dumps(metadata).encode('utf-8')) > max_bytes: # Se ainda for muito grande, trunca agressivamente
+            metadata[critical_field] = original_text_value[:50] + "..."
+            current_size = len(json.dumps(metadata).encode('utf-8'))
+        logging.warning(f"Campo crítico '{critical_field}' truncado. Novo tamanho: {len(metadata[critical_field])} caracteres.")
+
+    if current_size > max_bytes:
+        logging.error(f"Mesmo após truncamento agressivo, metadados ainda excedem o limite ({current_size} bytes). Isso pode causar falha no upsert.")
+    else:
+        logging.info(f"Metadados ajustados para {current_size} bytes (dentro do limite de {max_bytes} bytes).")
+
+    return metadata
+
 def load_prompt(file_path):
     """
     Carrega o conteúdo de um arquivo de prompt.
@@ -491,6 +548,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                                 break
                                     
                                     cleaned_metadata[template_key] = value_to_assign
+                                cleaned_metadata = truncate_metadata(cleaned_metadata)
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
