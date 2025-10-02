@@ -240,6 +240,63 @@ def normalize_text(text):
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
     return text.lower()
 
+def truncate_metadata(metadata, max_bytes=40960, critical_field='texto'):
+    """
+    Trunca os valores dos metadados para garantir que o tamanho total não exceda max_bytes.
+    Prioriza o truncamento de campos não-críticos antes do campo crítico.
+    """
+    if not isinstance(metadata, dict):
+        logging.warning("Metadados não são um dicionário. Não será possível truncar.")
+        return metadata
+
+    # Calcula o tamanho inicial dos metadados
+    current_size = len(json.dumps(metadata).encode('utf-8'))
+
+    if current_size <= max_bytes:
+        return metadata
+
+    logging.warning(f"Tamanho inicial dos metadados ({current_size} bytes) excede o limite de {max_bytes} bytes. Iniciando truncamento.")
+
+    # Separa campos críticos e não-críticos
+    non_critical_fields = [k for k in metadata if k != critical_field and isinstance(metadata[k], str)]
+    critical_field_value = metadata.get(critical_field)
+    
+    # 1. Truncar campos não-críticos primeiro
+    for field in non_critical_fields:
+        if current_size <= max_bytes:
+            break
+        original_value = metadata[field]
+        if isinstance(original_value, str):
+            # Reduz o campo em 10% a cada iteração até caber ou ser muito pequeno
+            while len(json.dumps(metadata).encode('utf-8')) > max_bytes and len(metadata[field]) > 50:
+                truncated_len = int(len(metadata[field]) * 0.9)
+                metadata[field] = original_value[:truncated_len] + "..."
+                current_size = len(json.dumps(metadata).encode('utf-8'))
+            if len(json.dumps(metadata).encode('utf-8')) > max_bytes: # Se ainda for muito grande, trunca agressivamente
+                metadata[field] = original_value[:50] + "..."
+                current_size = len(json.dumps(metadata).encode('utf-8'))
+            logging.warning(f"Campo '{field}' truncado. Novo tamanho: {len(metadata[field])} caracteres.")
+
+    # 2. Se ainda exceder, truncar o campo crítico (texto)
+    if current_size > max_bytes and isinstance(critical_field_value, str):
+        logging.warning(f"Após truncar campos não-críticos, metadados ainda excedem o limite ({current_size} bytes). Truncando campo crítico '{critical_field}'.")
+        original_text_value = critical_field_value
+        while len(json.dumps(metadata).encode('utf-8')) > max_bytes and len(metadata[critical_field]) > 50:
+            truncated_len = int(len(metadata[critical_field]) * 0.9)
+            metadata[critical_field] = original_text_value[:truncated_len] + "..."
+            current_size = len(json.dumps(metadata).encode('utf-8'))
+        if len(json.dumps(metadata).encode('utf-8')) > max_bytes: # Se ainda for muito grande, trunca agressivamente
+            metadata[critical_field] = original_text_value[:50] + "..."
+            current_size = len(json.dumps(metadata).encode('utf-8'))
+        logging.warning(f"Campo crítico '{critical_field}' truncado. Novo tamanho: {len(metadata[critical_field])} caracteres.")
+
+    if current_size > max_bytes:
+        logging.error(f"Mesmo após truncamento agressivo, metadados ainda excedem o limite ({current_size} bytes). Isso pode causar falha no upsert.")
+    else:
+        logging.info(f"Metadados ajustados para {current_size} bytes (dentro do limite de {max_bytes} bytes).")
+
+    return metadata
+
 def load_prompt(file_path):
     """
     Carrega o conteúdo de um arquivo de prompt.
@@ -422,9 +479,9 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             item['descricao_ia'] = 'sem_descricao'
                             
                             # Processar categorização com IA
-                            logging.debug(f"Conteúdo de 'texto' antes de extrair_ementa: {item.get('texto', '')}")
-                            ementa_extraida = extrair_ementa(item.get('texto', ''))
-                            texto_para_categorizar = ementa_extraida if ementa_extraida else item.get('texto', '')
+                            logging.debug(f"Conteúdo de 'texto' antes de extrair_ementa: {item.get('texto')}")
+                            ementa_extraida = extrair_ementa(item.get('texto') or '') # Garante que seja uma string vazia se item.get('texto') for None
+                            texto_para_categorizar = ementa_extraida if ementa_extraida else (item.get('texto') or '') # Garante que seja uma string vazia se ambos forem None
 
                             # Se o texto for o placeholder, tenta extrair do link
                             if "Não foi possível extrair conteúdo do documento" in texto_para_categorizar and item.get('link'):
@@ -473,7 +530,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 logging.info(f"Namespace para upsert no Pinecone: '{namespace}' (categoria_id: {item.get('categoria_id')})")
                                 # TODO: Substituir 'dummy_vector' por embeddings reais gerados pelo modelo SentenceTransformer.
                                 embeddings = model.encode(texto_para_categorizar).tolist()
-                                additional_metadata_template = load_additional_metadata(r"d:\Workspace\LawX-Scraper\docs\metadata.json")
+                                additional_metadata_template = load_additional_metadata(os.getenv('METADATA_JSON_PATH', './docs/metadata.json'))
                                 
                                 cleaned_metadata = {}
                                 normalized_item = {normalize_key_to_snake_case(k): v for k, v in item.items()}
@@ -491,6 +548,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                                 break
                                     
                                     cleaned_metadata[template_key] = value_to_assign
+                                cleaned_metadata = truncate_metadata(cleaned_metadata)
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
@@ -563,7 +621,7 @@ def load_tribunais(tribunal_a_validar=None):
     Se tribunal_a_validar for None, retorna todos os tribunais (incluindo 'TODOS').
     Se tribunal_a_validar for fornecido, verifica se o tribunal existe na lista.
     """
-    tribunais_file = os.path.join(os.path.dirname(__file__), 'config', 'tribunais.json')
+    tribunais_file = os.getenv('TRIBUNAIS_SOURCE', './config/tribunais.json')
     try:
         with open(tribunais_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -591,7 +649,7 @@ def load_tribunais(tribunal_a_validar=None):
 
 def load_categorias():
     """Carrega a lista de categorias do arquivo CSV."""
-    categorias_path = os.path.join(os.path.dirname(__file__), 'docs', 'categorias.csv')
+    categorias_path = os.getenv('CATEGORIES_CSV_PATH', './docs/categorias.csv')
     try:
         df_categorias = pd.read_csv(categorias_path, delimiter=';')
         # Converte o DataFrame para uma lista de dicionários
@@ -605,12 +663,15 @@ def load_categorias():
         sys.exit(1)
 
 def extrair_ementa(texto):
-    """Extrai a ementa de um texto, se presente."""
-    # Padrão para encontrar a ementa (exemplo: EMENTA: ...)
+    """
+    Extrai a ementa de um texto usando expressões regulares.
+    """
+    if texto is None:
+        texto = "" # Garante que 'texto' seja uma string vazia se for None
     match = re.search(r'EMENTA:\s*(.*?)(?=\n\n|\Z)', texto, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    return ""
+    return None
 
 def fetch_content_from_url(url):
     """Faz uma requisição HTTP para a URL e extrai o conteúdo de texto."""
@@ -656,7 +717,7 @@ def processar_com_ia(texto, categories_file_id, payload_uri):
     prompt_categoria_path = os.path.join(pasta_configs, 'prompt_categoria.txt')
     
     # Carregar categorias válidas do CSV
-    categorias_csv_path = os.path.join(os.path.dirname(__file__), 'docs', 'categorias.csv')
+    categorias_csv_path = os.getenv('CATEGORIES_CSV_PATH', './docs/categorias.csv')
     valid_categories = load_valid_categories(categorias_csv_path)
 
     try:
