@@ -479,9 +479,9 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             item['descricao_ia'] = 'sem_descricao'
                             
                             # Processar categorização com IA
-                            logging.debug(f"Conteúdo de 'texto' antes de extrair_ementa: {item.get('texto', '')}")
-                            ementa_extraida = extrair_ementa(item.get('texto', ''))
-                            texto_para_categorizar = ementa_extraida if ementa_extraida else item.get('texto', '')
+                            logging.debug(f"Conteúdo de 'texto' antes de extrair_ementa: {item.get('texto')}")
+                            ementa_extraida = extrair_ementa(item.get('texto') or '') # Garante que seja uma string vazia se item.get('texto') for None
+                            texto_para_categorizar = ementa_extraida if ementa_extraida else (item.get('texto') or '') # Garante que seja uma string vazia se ambos forem None
 
                             # Se o texto for o placeholder, tenta extrair do link
                             if "Não foi possível extrair conteúdo do documento" in texto_para_categorizar and item.get('link'):
@@ -663,12 +663,15 @@ def load_categorias():
         sys.exit(1)
 
 def extrair_ementa(texto):
-    """Extrai a ementa de um texto, se presente."""
-    # Padrão para encontrar a ementa (exemplo: EMENTA: ...)
+    """
+    Extrai a ementa de um texto usando expressões regulares.
+    """
+    if texto is None:
+        texto = "" # Garante que 'texto' seja uma string vazia se for None
     match = re.search(r'EMENTA:\s*(.*?)(?=\n\n|\Z)', texto, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    return ""
+    return None
 
 def fetch_content_from_url(url):
     """Faz uma requisição HTTP para a URL e extrai o conteúdo de texto."""
