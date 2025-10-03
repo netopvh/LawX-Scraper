@@ -28,6 +28,7 @@ from pinecone import Pinecone, ServerlessSpec
 from pinecone.exceptions import PineconeApiException
 from sentence_transformers import SentenceTransformer
 import unicodedata
+import math
 
 def sanitize_string_for_pinecone(text):
     """
@@ -337,6 +338,9 @@ def pluralize_with_ia(words_list):
 def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_selecionados, categorias_disponiveis, only_csv, categories_file_id, test=False, tipo_doc_procurado=None):
     logging.info(f"Valor de tipo_doc_procurado no início de request_singular: {tipo_doc_procurado}")
     processed_items_count = 0
+    processed_pages_count = 0
+    last_processed_item_id = None
+    items_on_current_page = 0
 
     FIELDS_TO_CHECK_PATH = os.getenv('FIELDS_TO_CHECK_PATH', r".\config\valida-campos-api.json")
     api_fields_to_check = load_fields_to_check(FIELDS_TO_CHECK_PATH)
@@ -407,6 +411,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
     for data in lista_datas:
         for tribunal_sigla in tribunais_para_pesquisar:
             page = 1
+            total_pages = 1 # Inicializa total_pages para garantir que o loop execute pelo menos uma vez
             while True:
                 base_url = os.getenv('SCRAP_BASE_URL')
                 params = {
@@ -433,13 +438,24 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                         resultado_atual = response.json()
                         logging.debug(f"Tipo de resultado_atual: {type(resultado_atual)}")
                         logging.debug(f"Conteúdo de resultado_atual (primeiros 1000 caracteres): {str(resultado_atual)[:1000]}")
+                        
+                        if page == 1: # Calcula total_pages apenas na primeira página
+                            total_items = resultado_atual.get('count', 0)
+                            items_per_page = params.get('itensPorPagina', 5)
+                            total_pages = math.ceil(total_items / items_per_page) if total_items > 0 else 0
+                            logging.info(f"Total de itens: {total_items}, Itens por página: {items_per_page}, Total de páginas: {total_pages}")
+
                         if not resultado_atual or not resultado_atual.get('items'):
                             logging.info(f"Nenhum item encontrado para a página {page} na data {data} e tribunal {tribunal_sigla}. Quebrando o loop.")
                             break
                         
+                        items_on_current_page = len(resultado_atual['items'])
+                        processed_pages_count += 1
+
                         # Processar resultados e enviar para o Pinecone
 
-                        for item in resultado_atual['items']:
+                        for item_index, item in enumerate(resultado_atual['items']):
+                            item_processed_successfully = True # Initialize for each item
                             if search_terms_normalized:
                                 item_match = False
                                 logging.info(f"Termos de busca normalizados: {search_terms_normalized}")
@@ -466,11 +482,14 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                         break
                                 if not item_match:
                                     logging.info(f"Item {item.get('id')} ignorado por não corresponder a '--tipo-doc'.")
+                                    item_processed_successfully = False # Mark as not processed
                                     continue # Pula para o próximo item se não houver correspondência
                             if test and processed_items_count >= 3:
                                 logging.info("Limite de 3 itens atingido no modo de teste. Parando o processamento.")
                                 break
                             logging.debug(f"Conteúdo do item: {item}")
+                            # Log de progresso detalhado
+                            logging.info(f"Processando item {item_index + 1}/{items_on_current_page} da página {page}/{total_pages} (Tribunal: {tribunal_sigla}, Data: {data})")
                             vector_id = str(item.get('id', uuid.uuid4()))
                             
                             # Initialize default values for categorization and description
@@ -497,6 +516,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             # Ignorar documentos com conteúdo indesejado
                             if "Não foi possível extrair conteúdo do documento" in texto_para_categorizar:
                                 logging.info(f"Documento ignorado devido ao conteúdo indesejado: {vector_id}")
+                                item_processed_successfully = False # Mark as not processed
                                 continue # Pula para o próximo item
                             
                             if texto_para_categorizar:
@@ -552,7 +572,9 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 index.upsert(vectors=[{"id": vector_id, "values": embeddings, "metadata": cleaned_metadata}], namespace=namespace)
                                 logging.info(f"Item {vector_id} enviado para o Pinecone no namespace '{namespace}'.")
 
-                            processed_items_count += 1 # Increment count once per item
+                            if item_processed_successfully: # Increment count only if successfully processed
+                                processed_items_count += 1
+                                last_processed_item_id = item.get('id')
 
                             # Manter geração de CSV e logs
                             logging.debug("Verificando preservação de acentuação para CSV: os dados originais do item são usados.")
@@ -579,15 +601,23 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             break
 
                         page += 1
+                        if page > total_pages and total_pages > 0: # Quebra o loop se todas as páginas foram processadas
+                            logging.info(f"Todas as {total_pages} páginas processadas para a data {data} e tribunal {tribunal_sigla}.")
+                            break
                     except json.JSONDecodeError:
                         logging.error("Erro ao decodificar JSON da resposta.")
                         break
                 else:
                     logging.error(f"Erro na requisição: {response.status_code} - {response.text}")
                     break
-                page += 1
             if test and processed_items_count >= 3:
                 break
+    logging.info(f"\n--- Resumo do Processamento ---")
+    logging.info(f"Total de páginas encontradas: {total_pages}")
+    logging.info(f"Total de páginas processadas: {processed_pages_count}")
+    logging.info(f"Total de itens processados: {processed_items_count}")
+    logging.info(f"Último item processado (ID): {last_processed_item_id}")
+    logging.info(f"-------------------------------")
     logging.info("request_singular finalizado.")
     
 def log_ai_interaction(input_text, raw_ai_response, categoria_id, desc_categoria, payload_uri):
