@@ -392,13 +392,10 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
 
     # Lógica de filtragem de tribunais
     tribunais_para_pesquisar = []
-    if tribunais_selecionados.lower() == "todos":
-        # Se 'Todos' for selecionado, carregar todos os tribunais disponíveis
-        tribunais_disponiveis = load_tribunais()
-        tribunais_para_pesquisar = [t for t in tribunais_disponiveis if t != "TODOS"]
-    else:
-        # Caso contrário, usar os tribunais fornecidos pelo usuário
-        tribunais_disponiveis_lista = load_tribunais()
+    # Verifica se 'TODOS' está presente na string de tribunais selecionados
+    if "todos" in tribunais_selecionados.lower():
+        tribunais_para_pesquisar.append("TODOS")
+    else:        
         for t in tribunais_selecionados.split(','):
             tribunal_limpo = t.strip()
             if load_tribunais(tribunal_a_validar=tribunal_limpo):
