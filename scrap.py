@@ -26,7 +26,7 @@ client = OpenAI()
 from datetime import datetime, timedelta
 from pinecone import Pinecone, ServerlessSpec
 from pinecone.exceptions import PineconeApiException
-from sentence_transformers import SentenceTransformer
+
 import unicodedata
 import math
 
@@ -154,15 +154,18 @@ if not categories_file_id:
 
 logging.getLogger().setLevel(log_level) # Set root logger level based on help request
 
-model = SentenceTransformer('intfloat/multilingual-e5-large')
+
 
 def generate_vetor(texto):
-    """Gera um vetor (embedding) para o texto fornecido usando o modelo SentenceTransformer."""
+    """Gera um vetor (embedding) para o texto fornecido usando o modelo text-embedding-3-small da OpenAI."""
     try:
-        embedding = model.encode(texto, convert_to_tensor=False).tolist()
-        return embedding
+        response = client.embeddings.create(
+            input=[texto],
+            model="text-embedding-3-small"
+        )
+        return response.data[0].embedding
     except Exception as e:
-        logging.error(f"Erro ao gerar vetor para o texto: {e}")
+        logging.error(f"Erro ao gerar vetor com OpenAI para o texto: {e}")
         return None
 
 def save_backup_vetorizado(file_path, data):
@@ -197,7 +200,8 @@ def _initialize_pinecone_client(dimension=None):
                 name=pinecone_index_name,
                 dimension=dimension,
                 metric='cosine',
-                spec=ServerlessSpec(cloud=pinecone_cloud, region=pinecone_environment)
+                spec=ServerlessSpec(cloud=pinecone_cloud, region=pinecone_environment),
+                tags={"embedding_model": "text-embedding-3-small"}
             )
             logging.info(f"Índice Pinecone '{pinecone_index_name}' criado.")
         else:
@@ -217,8 +221,11 @@ def _initialize_pinecone_client(dimension=None):
 def deploy(namespace=None, ids=None, vectors=None, metadata=None):
     """Realiza o upsert dos embeddings no Pinecone."""
     try:
-        pc, pinecone_index_name = _initialize_pinecone_client(dimension=1024)
+        pc, pinecone_index_name = _initialize_pinecone_client(dimension=1536)
         index = pc.Index(pinecone_index_name)
+        # Adiciona a tag embedding_model a cada item de metadados
+        for meta_item in metadata:
+            meta_item['embedding_model'] = "text-embedding-3-small"
         index.upsert(vectors=zip(ids, vectors, metadata), namespace=namespace)
         logging.info(f"Embeddings inseridos no Pinecone para o namespace '{namespace}'.")
         return True
@@ -379,7 +386,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
 
     # Configuração do Pinecone
     if not only_csv:
-        pc, pinecone_index_name = _initialize_pinecone_client(dimension=1024)
+        pc, pinecone_index_name = _initialize_pinecone_client(dimension=1536)
         if pc is None or pinecone_index_name is None:
             return
 
@@ -546,7 +553,11 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 namespace = sanitize_string_for_pinecone(namespace_raw)
                                 logging.info(f"Namespace para upsert no Pinecone: '{namespace}' (categoria_id: {item.get('categoria_id')})")
                                 # TODO: Substituir 'dummy_vector' por embeddings reais gerados pelo modelo SentenceTransformer.
-                                embeddings = model.encode(texto_para_categorizar).tolist()
+                                embeddings = generate_embedding(texto_para_categorizar)
+                                if embeddings is None:
+                                    logging.warning(f"Não foi possível gerar embeddings para o item {vector_id}. Ignorando upsert.")
+                                    item_processed_successfully = False
+                                    continue
                                 additional_metadata_template = load_additional_metadata(os.getenv('METADATA_JSON_PATH', './docs/metadata.json'))
                                 
                                 cleaned_metadata = {}
@@ -699,6 +710,18 @@ def extrair_ementa(texto):
     if match:
         return match.group(1).strip()
     return None
+
+def generate_embedding(text):
+    """Gera embeddings para o texto fornecido usando a API de embeddings da OpenAI."""
+    try:
+        response = client.embeddings.create(
+            input=[text],
+            model="text-embedding-3-small"
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        logging.error(f"Erro ao gerar embedding com OpenAI: {e}")
+        return None
 
 def fetch_content_from_url(url):
     """Faz uma requisição HTTP para a URL e extrai o conteúdo de texto."""
@@ -870,25 +893,6 @@ Este é o texto a ser analisado:
         logging.error(f"Erro geral em gerar_descricao_com_ia: {e}")
         return ""
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Script de scraping de jurisprudência.")
-    parser.add_argument("--data-inicio", help="Data de início no formato DD/MM/AAAA", required=True)
-    parser.add_argument("--data-fim", default=None, help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.")
-    parser.add_argument('--tipo-doc', type=str, help='Tipo de documento a ser pesquisado (ex: Edital, Acórdão).', default=None)
-    parser.add_argument("--tribunal", type=str, default='TODOS', help='Sigla do tribunal para filtrar (ex: TJSP, TRF3). Use "TODOS" para pesquisar em todos os tribunais configurados.')
-    parser.add_argument("--only-csv", action='store_true', help='Se presente, os dados serão salvos apenas em CSV, sem interação com o Pinecone.')
-    parser.add_argument("--test", action='store_true', help='Executa o scraper em modo de teste, processando apenas 3 itens.')
-
-    args = parser.parse_args()
-
-    # Carrega as categorias válidas do arquivo CSV
-    CATEGORIES_FILE_PATH = os.getenv('CATEGORIES_CSV_PATH', r"./docs/categorias.csv")
-    categorias_disponiveis = load_valid_categories(CATEGORIES_FILE_PATH)
-
-    request_singular(args.data_inicio, args.data_fim, args.tipo_doc, args.tribunal, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
-
-
 def fetch_content_from_url(url):
     """Baixa o conteúdo de uma URL e tenta extrair texto.
     """
@@ -916,3 +920,20 @@ def fetch_content_from_url(url):
         return None
     except Exception as e:
         logging.error(f"Erro inesperado ao processar URL {url}: {e}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Script de scraping de jurisprudência.")
+    parser.add_argument("--data-inicio", help="Data de início no formato DD/MM/AAAA", required=True)
+    parser.add_argument("--data-fim", default=None, help="Data de fim no formato DD/MM/AAAA. Se não fornecida, será igual à data de início.")
+    parser.add_argument('--tipo-doc', type=str, help='Tipo de documento a ser pesquisado (ex: Edital, Acórdão).', default=None)
+    parser.add_argument("--tribunal", type=str, default='TODOS', help='Sigla do tribunal para filtrar (ex: TJSP, TRF3). Use "TODOS" para pesquisar em todos os tribunais configurados.')
+    parser.add_argument("--only-csv", action='store_true', help='Se presente, os dados serão salvos apenas em CSV, sem interação com o Pinecone.')
+    parser.add_argument("--test", action='store_true', help='Executa o scraper em modo de teste, processando apenas 3 itens.')
+
+    args = parser.parse_args()
+
+    # Carrega as categorias válidas do arquivo CSV
+    CATEGORIES_FILE_PATH = os.getenv('CATEGORIES_CSV_PATH', r"./docs/categorias.csv")
+    categorias_disponiveis = load_valid_categories(CATEGORIES_FILE_PATH)
+
+    request_singular(args.data_inicio, args.data_fim, args.tipo_doc, args.tribunal, categorias_disponiveis, args.only_csv, categories_file_id, args.test)
