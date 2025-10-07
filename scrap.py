@@ -316,6 +316,16 @@ def load_prompt(file_path):
         logging.error(f"Arquivo de prompt não encontrado: {file_path}")
         return None
 
+def save_progress_to_json(progress_data, file_path):
+    """Salva os dados de progresso em um arquivo JSON."""
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(progress_data, f, ensure_ascii=False, indent=4)
+        logging.debug(f"Progresso salvo em: {file_path}")
+    except Exception as e:
+        logging.error(f"Erro ao salvar progresso em JSON: {e}")
+
 def pluralize_with_ia(words_list):
     """
     Pluraliza uma lista de palavras usando a OpenAI API.
@@ -349,6 +359,8 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
     last_processed_item_id = None
     items_on_current_page = 0
 
+
+
     FIELDS_TO_CHECK_PATH = os.getenv('FIELDS_TO_CHECK_PATH', r".\config\valida-campos-api.json")
     api_fields_to_check = load_fields_to_check(FIELDS_TO_CHECK_PATH)
     if not api_fields_to_check:
@@ -365,6 +377,27 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
             logging.warning(f"Nenhum documento padrão encontrado em {DOCS_SOURCE}. A filtragem por tipo_doc pode não funcionar corretamente.")
 
     logging.info(f"Valor final de tipo_doc_procurado antes da normalização: {tipo_doc_procurado}")
+
+    # Inicialização do arquivo de progresso JSON
+    progress_dir = os.path.join("logs", "progress")
+    os.makedirs(progress_dir, exist_ok=True)
+    timestamp_start = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    progress_file_name = f"scrap_{timestamp_start}.json"
+    progress_file_path = os.path.join(progress_dir, progress_file_name)
+
+    progress_data = {
+        "data_inicio": data_inicio,
+        "data_fim": data_fim if data_fim else data_inicio,
+        "tipo_doc": tipo_doc_procurado if tipo_doc_procurado else "acordao,sumula", # Agora usa o valor final de tipo_doc_procurado ou o padrão
+        "tribunal": tribunais_selecionados,
+        "pagina_atual": 0,
+        "pagina_total": 0,
+        "item_atual": 0,
+        "itens_total": 0,
+        "status": "in_progress",
+        "timestamp": datetime.now().isoformat()
+    }
+    save_progress_to_json(progress_data, progress_file_path)
 
     search_terms_normalized = []
     if tipo_doc_procurado:
@@ -448,6 +481,11 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                             items_per_page = params.get('itensPorPagina', 5)
                             total_pages = math.ceil(total_items / items_per_page) if total_items > 0 else 0
                             logging.info(f"Total de itens: {total_items}, Itens por página: {items_per_page}, Total de páginas: {total_pages}")
+
+                            # Atualiza o total de páginas e itens no progresso
+                            progress_data["pagina_total"] = total_pages
+                            progress_data["itens_total"] = total_items
+                            save_progress_to_json(progress_data, progress_file_path)
 
                         if not resultado_atual or not resultado_atual.get('items'):
                             logging.info(f"Nenhum item encontrado para a página {page} na data {data} e tribunal {tribunal_sigla}. Quebrando o loop.")
@@ -584,6 +622,11 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                                 processed_items_count += 1
                                 last_processed_item_id = item.get('id')
 
+                                # Atualiza o progresso após o processamento de cada item
+                                progress_data["item_atual"] = item_index + 1  # item_index é 0-based
+                                progress_data["timestamp"] = datetime.now().isoformat()
+                                save_progress_to_json(progress_data, progress_file_path)
+
                             # Manter geração de CSV e logs
                             logging.debug("Verificando preservação de acentuação para CSV: os dados originais do item são usados.")
                             output_base_dir = os.path.join(os.path.dirname(__file__), 'output')
@@ -608,18 +651,31 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
                         if test and processed_items_count >= 3:
                             break
 
+                        # Atualiza o progresso após o processamento de cada página
+                        progress_data["pagina_atual"] = page
+                        progress_data["timestamp"] = datetime.now().isoformat()
+                        save_progress_to_json(progress_data, progress_file_path)
+
                         page += 1
                         if page > total_pages and total_pages > 0: # Quebra o loop se todas as páginas foram processadas
                             logging.info(f"Todas as {total_pages} páginas processadas para a data {data} e tribunal {tribunal_sigla}.")
                             break
-                    except json.JSONDecodeError:
-                        logging.error("Erro ao decodificar JSON da resposta.")
+                    except requests.exceptions.RequestException as e:
+                        logging.error(f"Erro na requisição para a data {data} e tribunal {tribunal_sigla}, página {page}: {e}")
                         break
-                else:
-                    logging.error(f"Erro na requisição: {response.status_code} - {response.text}")
-                    break
+                    except json.JSONDecodeError as e:
+                        logging.error(f"Erro ao decodificar JSON para a data {data} e tribunal {tribunal_sigla}, página {page}: {e}. Resposta: {response.text[:500]}...")
+                        break
+                    except Exception as e:
+                        logging.error(f"Erro inesperado ao processar a data {data} e tribunal {tribunal_sigla}, página {page}: {e}")
+                        break
             if test and processed_items_count >= 3:
                 break
+    # Finaliza o progresso
+    progress_data["status"] = "completed"
+    progress_data["timestamp"] = datetime.now().isoformat()
+    save_progress_to_json(progress_data, progress_file_path)
+
     logging.info(f"\n--- Resumo do Processamento ---")
     logging.info(f"Total de páginas encontradas: {total_pages}")
     logging.info(f"Total de páginas processadas: {processed_pages_count}")
@@ -627,6 +683,7 @@ def request_singular(data_inicio, data_fim, jurisprudencia_procurada, tribunais_
     logging.info(f"Último item processado (ID): {last_processed_item_id}")
     logging.info(f"-------------------------------")
     logging.info("request_singular finalizado.")
+    return processed_items_count
     
 def log_ai_interaction(input_text, raw_ai_response, categoria_id, desc_categoria, payload_uri):
     """
